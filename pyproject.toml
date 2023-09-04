@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdl"
+description = "Minimum Description Length Probing for Neural Network Representations"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["interpretability", "explainable-ai"]
+license = { text = "MIT License" }
+dependencies = [
+    "torch>=1.11.0",
+    "tqdm",
+]
+version = "0.0.1"
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis",
+    "numpy",
+    "pre-commit",
+    "pytest",
+    "pyright==1.1.304",
+]
+
+[tool.pyright]
+include = ["mdl*"]
+reportPrivateImportUsage = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["mdl"]
+
+[tool.ruff]
+# Enable pycodestyle (`E`), Pyflakes (`F`), and isort (`I`) codes
+# See https://beta.ruff.rs/docs/rules/ for more possible rules
+select = ["E", "F", "I"]
+# Same as Black.
+line-length = 88
+# Avoid automatically removing unused imports in __init__.py files.
+# Such imports will be flagged with a dedicated message suggesting
+# that the import is either added to the module's __all__ symbol
+ignore-init-module-imports = true
