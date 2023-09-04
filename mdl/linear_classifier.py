@@ -1,10 +1,13 @@
-from typing import NamedTuple
 import math
+from typing import NamedTuple
 
 import torch
 from torch import Tensor
 from torch.nn.functional import (
-    binary_cross_entropy_with_logits as bce_with_logits, cross_entropy,
+    binary_cross_entropy_with_logits as bce_with_logits,
+)
+from torch.nn.functional import (
+    cross_entropy,
 )
 from tqdm.auto import tqdm
 
@@ -34,7 +37,10 @@ class LinearClassifier(torch.nn.Module):
         super().__init__()
 
         self.linear = torch.nn.Linear(
-            num_features, num_classes if num_classes > 2 else 1, device=device, dtype=dtype
+            num_features,
+            num_classes if num_classes > 2 else 1,
+            device=device,
+            dtype=dtype,
         )
         self.linear.bias.data.zero_()
         self.linear.weight.data.zero_()
@@ -117,12 +123,11 @@ class LinearClassifier(torch.nn.Module):
             reg_loss.backward()
             return float(reg_loss)
 
-        # Split the data into chunks for prequential MDL estimation. Each chunk is the
-        # same size if `chunk_size` divides the number of samples evenly, otherwise
-        # the last chunk is smaller.
-        thresh = k ** 2
-        x_chunks = logspace_split(x, min_size=thresh) #x.split(chunk_size) if chunk_size else [x]
-        y_chunks = logspace_split(y, min_size=thresh) # y.split(chunk_size) if chunk_size else [y]
+        # Split the data into chunks for prequential MDL estimation.
+        # TODO: This is a weird heuristic, do something smarter.
+        thresh = k**2
+        x_chunks = logspace_split(x, min_size=thresh)
+        y_chunks = logspace_split(y, min_size=thresh)
 
         # State for prequential MDL estimation
         mdl = 0.0
