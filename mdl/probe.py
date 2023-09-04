@@ -28,8 +28,8 @@ class MdlResult(NamedTuple):
     """Number of samples used for each chunk."""
 
 
-class Classifier(nn.Module, ABC):
-    """Linear classifier trained with supervised learning."""
+class Probe(nn.Module, ABC):
+    """Base class for probes."""
 
     def __init__(
         self,
@@ -84,13 +84,8 @@ class Classifier(nn.Module, ABC):
         """
         assert len(x) == len(y), "Input and target must have the same number of samples"
 
-        # By default, we set the L2 penalty equal to log(num_classes) so that it's on
-        # the same scale as the cross-entropy loss.
-        if l2_penalty is None:
-            l2_penalty = math.log(self.num_classes)
-        else:
-            eps = torch.finfo(x.dtype).eps
-            assert l2_penalty > eps, "Cannot have a uniform prior over the parameters"
+        eps = torch.finfo(x.dtype).eps
+        assert l2_penalty > eps, "Cannot have a uniform prior over the parameters"
 
         # Shuffle the data so we don't learn in a weirdly structured order
         rng = torch.Generator(device=x.device).manual_seed(seed)

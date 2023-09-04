@@ -1,11 +1,11 @@
 import torch
 from torch import Tensor
 
-from .classifier import Classifier
+from .probe import Probe
 
 
-class LinearClassifier(Classifier):
-    """Linear classifier trained with supervised learning."""
+class LinearProbe(Probe):
+    """Linear probe trained with cross-entropy loss."""
 
     def __init__(
         self,

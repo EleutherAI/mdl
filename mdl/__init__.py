@@ -1,4 +1,4 @@
-from .linear_classifier import LinearClassifier
-from .mlp_classifier import MlpClassifier
+from .linear_probe import LinearProbe
+from .mlp_probe import MlpProbe
 
-__all__ = ["LinearClassifier", "MlpClassifier"]
+__all__ = ["LinearProbe", "MlpProbe"]

@@ -2,11 +2,11 @@ import torch
 from torch import Tensor, nn
 from torch.nn.functional import gelu
 
-from .classifier import Classifier
+from .probe import Probe
 
 
-class MlpClassifier(Classifier):
-    """Linear classifier trained with supervised learning."""
+class MlpProbe(Probe):
+    """Two-layer perceptron probe with GELU activation."""
 
     def __init__(
         self,
