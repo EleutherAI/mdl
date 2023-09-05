@@ -1,9 +1,14 @@
 import math
 from abc import ABC, abstractmethod
-from typing import NamedTuple
+from copy import deepcopy
+from dataclasses import dataclass
+from functools import partial
+from typing import Literal, NamedTuple
 
 import torch
-from torch import Tensor, nn
+from scipy.optimize import curve_fit
+from torch import Tensor, nn, optim
+from torch.func import functional_call, stack_module_state, vmap
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_with_logits,
 )
@@ -15,7 +20,15 @@ from tqdm.auto import tqdm
 from .math import partition_logspace
 
 
-class MdlResult(NamedTuple):
+class PowerLaw(NamedTuple):
+    """Parameters of a power law."""
+
+    a: float
+    b: float
+
+
+@dataclass
+class MdlResult:
     """Result of a prequential minimum description length (MDL) estimation."""
 
     mdl: float
@@ -26,6 +39,14 @@ class MdlResult(NamedTuple):
 
     sample_sizes: list[int]
     """Number of samples used for each chunk."""
+
+    def scaling_law(self) -> PowerLaw:
+        """Fits a power law to the cross-entropy curve."""
+
+        (a_hat, b_hat), _ = curve_fit(
+            lambda x, a, b: a / x**b, self.sample_sizes[1:], self.ce_curve[1:]
+        )
+        return PowerLaw(a_hat, b_hat)
 
 
 class Probe(nn.Module, ABC):
@@ -58,8 +79,10 @@ class Probe(nn.Module, ABC):
         *,
         l2_penalty: float = 0.1,
         max_iter: int = 1000,
-        num_chunks: int = 5,
+        num_chunks: int = 10,
+        num_trials: int = 5,
         seed: int = 42,
+        solver: Literal["adam", "lbfgs"] = "lbfgs",
         verbose: bool = False,
     ) -> MdlResult:
         """Fits the model to the input data using L-BFGS with L2 regularization.
@@ -91,14 +114,26 @@ class Probe(nn.Module, ABC):
 
         # Shuffle the data so we don't learn in a weirdly structured order
         rng = torch.Generator(device=x.device).manual_seed(seed)
-        indices = torch.randperm(len(x), device=x.device, generator=rng)
-        x, y = x[indices], y[indices]
 
-        optimizer = torch.optim.LBFGS(
-            self.parameters(),
-            line_search_fn="strong_wolfe",
-            max_iter=max_iter,
+        # Generate num_trials different permutations of the data
+        indices = torch.stack(
+            [
+                torch.randperm(len(x), device=x.device, generator=rng)
+                for _ in range(num_trials)
+            ]
         )
+
+        # Generate num_trials copies of the model
+        models = [deepcopy(self) for _ in range(num_trials)]
+        params, buffers = stack_module_state(models)  # type: ignore
+        parallel_fwd = vmap(partial(functional_call, self))
+
+        n, d = x.shape
+        min_size = max(self.num_classes, d)
+        parts = partition_logspace(n, num_chunks, min_size)
+
+        # This adds an extra batch dimension
+        x, y = x[indices], y[indices]
 
         loss_fn = bce_with_logits if self.num_classes == 2 else cross_entropy
         y = y.to(
@@ -112,18 +147,18 @@ class Probe(nn.Module, ABC):
             # We sum the loss over data points instead of averaging it, so that the
             # L2 penalty decreases in relative importance as the dataset grows. This
             # allows us to interpret the penalty as a prior over the parameters.
-            logits = self(x[:t]).squeeze(-1)
-            loss = loss_fn(logits, y[:t], reduction="sum")
+            logits = parallel_fwd((params, buffers), x[:, :t]).squeeze(-1)
+            loss = loss_fn(
+                logits.flatten(0, 1), y[:, :t].flatten(0, 1), reduction="sum"
+            )
 
-            norm_sq = sum(p.square().sum() for p in self.parameters())
+            norm_sq = sum(p.square().sum() for p in params.values())
             reg_loss = loss + l2_penalty * norm_sq
             reg_loss.backward()
             return float(reg_loss)
 
         # Split the data into chunks for prequential MDL estimation.
-        min_size = max(self.num_classes, x.shape[-1])
-        parts = partition_logspace(len(x), num_chunks, min_size)
-        x_chunks, y_chunks = x.split(parts), y.split(parts)
+        x_chunks, y_chunks = x.split(parts, 1), y.split(parts, 1)
 
         # State for prequential MDL estimation
         mdl = 0.0
@@ -134,16 +169,69 @@ class Probe(nn.Module, ABC):
         for x_chunk, y_chunk in zip(tqdm(x_chunks, disable=not verbose), y_chunks):
             # First evaluate on this chunk
             with torch.no_grad():
-                per_sample_ce = loss_fn(self(x_chunk), y_chunk).item() / math.log(2)
+                logits = parallel_fwd((params, buffers), x_chunk).flatten(0, 1)
+                y_chunk = y_chunk.flatten(0, 1)
+
+                per_sample_ce = loss_fn(logits, y_chunk).item() / math.log(2)
                 losses.append(per_sample_ce)
                 sample_sizes.append(t)
 
             # Weight the loss by the number of samples in the chunk
-            mdl += per_sample_ce * len(x_chunk)
-            t += len(x_chunk)
+            mdl += per_sample_ce * x_chunk.shape[1]
+            t += x_chunk.shape[1]
+
+            models = [deepcopy(self) for _ in range(num_trials)]
+            params, buffers = stack_module_state(models)  # type: ignore
 
             # Then train on it
-            self.reset_parameters()
-            optimizer.step(closure)
+            if solver == "adam":
+                optimizer = optim.AdamW(params.values())
+                schedule = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, factor=0.5, patience=0, verbose=True
+                )
+                x_, y_ = x[:, :t], y[:, :t]
+
+                # Split into train and val
+                val_size = min(1000, x_.shape[1] // 10)
+                assert val_size > 0, "Dataset is too small to split into train and val"
+
+                x_train, y_train = x_[:, val_size:], y_[:, val_size:]
+                x_val, y_val = x_[:, :val_size], y_[:, :val_size]
+
+                n = x_train.shape[1]
+                batch_size = min(32, n)
+
+                for _ in range(100):
+                    # Train loop
+                    for i in range(0, n, batch_size):
+                        optimizer.zero_grad()
+
+                        x_batch = x_train[:, i : i + batch_size]
+                        y_batch = y_train[:, i : i + batch_size]
+
+                        logits = parallel_fwd((params, buffers), x_batch).squeeze(-1)
+                        loss = loss_fn(
+                            logits.flatten(0, 1),
+                            y_batch.flatten(0, 1),
+                        )
+                        loss.backward()
+                        optimizer.step()
+
+                    # Val loop
+                    with torch.no_grad():
+                        logits = parallel_fwd((params, buffers), x_val).squeeze(-1)
+                        loss = loss_fn(logits.flatten(0, 1), y_val.flatten(0, 1))
+
+                    schedule.step(loss)
+                    if optimizer.param_groups[0]["lr"] < 6e-5:
+                        print(f"Early stopping with loss {loss.item()}")
+                        break
+            else:
+                optimizer = optim.LBFGS(
+                    params.values(),
+                    line_search_fn="strong_wolfe",
+                    max_iter=max_iter,
+                )
+                optimizer.step(closure)
 
         return MdlResult(mdl / t, losses, sample_sizes)

@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.optimize import brentq
 
 
@@ -61,14 +62,35 @@ def partition_logspace(n: int, num_parts: int, start: int = 1) -> list[int]:
 
 
 def solve_geometric_series(S: float, n: int, a: float = 1.0) -> float:
-    """Solve the `n`-term geometric series starting at `a` summing to `S` for `r`."""
+    """Solve the `n`-term geometric series starting at `a` summing to `S` for `r`.
+
+    We assume all terms are positive and that `r > 1`. We return the unique positive
+    root of the corresponding polynomial in `r`. This function is useful for generating
+    logarithmically-spaced grids of numbers that sum to a given value.
+    """
+    # Exclude trivial cases
+    assert n > 1, "n must be greater than 1"
+    assert S > n * a > 0, "Sum must be greater than n * a, which must be positive"
+
+    # Recall the formula for the sum of a geometric series:
+    #   S = a + ar + ar^2 + ... + ar^(n - 1) = a * (1 - r^n) / (1 - r)
+    # Assuming r != 1, we can solve the following order-n polynomial in r:
+    #   ar^n - Sr + (S - a) = 0
+    # We only want positive root(s) other than unity. Luckily, Descartes' rule of signs
+    # implies there is precisely one such root: the number of positive roots is at most
+    # the number of sign changes in the nonzero coefficients, which is two in our case
+    # since S > a. Since (# sign changes) - (# positive roots) must be an even number
+    # and r = 1 is always a solution, this non-unit positive root must exist.
+    # To find this root, we use Brent's root-finding algorithm with appropriate bounds.
     result = brentq(
         # See https://en.wikipedia.org/wiki/Geometric_series#Finite_series
         lambda r: a * (1 - r**n) / (1 - r) - S,
-        # We want to avoid r = 1, which is a singularity.
-        1 + 2.220446049250313e-16,
-        # This is a loose upper bound on the solution.
-        n * S ** (1 / n),
+        # We want to avoid r = 1, which is a singularity. The interval `0 < r < 1` also
+        # doesn't work because we require that the sum of the series be greater than
+        # `n` times the smallest term `a`.
+        1 + np.finfo(float).eps,
+        # Cauchy's upper bound
+        1 + S / a,
     )
     assert isinstance(result, float)
 
