@@ -12,7 +12,7 @@ from torch.nn.functional import (
 )
 from tqdm.auto import tqdm
 
-from .utils import logspace_split
+from .math import partition_logspace
 
 
 class MdlResult(NamedTuple):
@@ -58,6 +58,7 @@ class Probe(nn.Module, ABC):
         *,
         l2_penalty: float = 0.1,
         max_iter: int = 1000,
+        num_chunks: int = 5,
         seed: int = 42,
         verbose: bool = False,
     ) -> MdlResult:
@@ -75,6 +76,7 @@ class Probe(nn.Module, ABC):
                 precision of the Gaussian prior over the parameters. If `None`, use
                 the default value of `num_classes`.
             max_iter: Maximum number of iterations for the L-BFGS optimizer.
+            num_chunks: Number of chunks to split the data into for prequential MDL.
             seed: Random seed for shuffling the data.
             tol: Tolerance for the L-BFGS optimizer.
             verbose: Whether to display a progress bar.
@@ -119,9 +121,9 @@ class Probe(nn.Module, ABC):
             return float(reg_loss)
 
         # Split the data into chunks for prequential MDL estimation.
-        thresh = max(self.num_classes, x.shape[-1])
-        x_chunks = logspace_split(x, min_size=thresh)
-        y_chunks = logspace_split(y, min_size=thresh)
+        min_size = max(self.num_classes, x.shape[-1])
+        parts = partition_logspace(len(x), num_chunks, min_size)
+        x_chunks, y_chunks = x.split(parts), y.split(parts)
 
         # State for prequential MDL estimation
         mdl = 0.0
