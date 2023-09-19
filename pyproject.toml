@@ -13,6 +13,7 @@ dependencies = [
     "scipy",
     # Needed for torch.func
     "torch>=2.0.0",
+    "torchvision>=0.15",
     "tqdm",
 ]
 version = "0.0.1"
