@@ -104,8 +104,6 @@ class Probe(nn.Module, ABC):
 
             # Train on batches
             self.train()
-            c = x_train.split(batch_size)
-            print(len(c), len(c[0]), len(c[-1]))
 
             for x_batch, y_batch in zip(
                 x_train.split(batch_size), y_train.split(batch_size)
