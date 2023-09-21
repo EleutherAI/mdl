@@ -46,6 +46,7 @@ class Probe(nn.Module, ABC):
         preprocessor: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
         seed: int = 42,
         verbose: bool = False,
+        return_validation_losses: bool = False,
     ):
         """Fits the model to the input data using Adam with L2 regularization.
 
@@ -61,6 +62,7 @@ class Probe(nn.Module, ABC):
             seed: Random seed for shuffling the data.
             tol: Tolerance for the L-BFGS optimizer.
             verbose: Whether to display a progress bar.
+            return_validation_losses: whether to return the validation losses of each epoch.
 
         Returns:
             The negative log-likelihood of each chunk of data.
@@ -75,6 +77,7 @@ class Probe(nn.Module, ABC):
 
         val_size = min(4096, len(x) // 5)
         assert val_size > 0, "Dataset is too small to split into train and val"
+        val_losses = []
 
         x_train, y_train = x[val_size:], y[val_size:]
         x_val, y_val = x[:val_size], y[:val_size]
@@ -101,8 +104,9 @@ class Probe(nn.Module, ABC):
 
             # Train on batches
             self.train()
+
             for x_batch, y_batch in zip(
-                x_train.chunk(batch_size), y_train.chunk(batch_size)
+                x_train.split(batch_size), y_train.split(batch_size)
             ):
                 opt.zero_grad()
 
@@ -118,7 +122,10 @@ class Probe(nn.Module, ABC):
                 loss = self.loss(x_val, y_val)
                 schedule.step()
 
+            val_losses.append(loss.item())
             pbar.set_postfix(loss=loss.item())
+        if return_validation_losses:
+            return val_losses
 
     def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
