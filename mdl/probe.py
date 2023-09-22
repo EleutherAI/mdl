@@ -87,10 +87,9 @@ class Probe(nn.Module, ABC):
         )
 
         opt = self.build_optimizer()
-        # schedule = optim.lr_scheduler.ReduceLROnPlateau(
-        #     opt, factor=0.5, patience=0, threshold=0.01
-        # )
-        schedule = optim.lr_scheduler.CosineAnnealingLR(opt, max_epochs)
+        schedule = optim.lr_scheduler.ReduceLROnPlateau(
+            opt, factor=0.5, patience=0, threshold=0.01
+        )
         pbar = trange(max_epochs, desc="Epoch", disable=not verbose)
 
         self.eval()
@@ -99,8 +98,8 @@ class Probe(nn.Module, ABC):
 
         for _ in pbar:
             # Check early stop criterion
-            # if opt.param_groups[0]["lr"] < opt.defaults["lr"] * 0.5 ** early_stop_epochs:
-            #    break
+            if opt.param_groups[0]["lr"] < opt.defaults["lr"] * 0.5 ** early_stop_epochs:
+                break
 
             # Train on batches
             self.train()
@@ -120,7 +119,7 @@ class Probe(nn.Module, ABC):
                 self.eval()
 
                 loss = self.loss(x_val, y_val)
-                schedule.step()
+                schedule.step(loss)
 
             val_losses.append(loss.item())
             pbar.set_postfix(loss=loss.item())
