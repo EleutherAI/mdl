@@ -3,6 +3,7 @@ from typing import Callable, Literal
 import pandas as pd
 import torch
 from concept_erasure import QuadraticFitter
+from sklearn.metrics import accuracy_score
 from torchvision.datasets import CIFAR10
 from torchvision.transforms.functional import to_tensor
 
@@ -123,6 +124,15 @@ def evaluate_model(
     compute_by_class: bool = False,
     metric: Literal["loss", "top1"] = "loss",
 ) -> torch.Tensor:
+    def eval_metric(x, y):
+        return (
+            model.loss(x, y)
+            if metric == "loss"
+            else accuracy_score(
+                y.clone().cpu(), model(x.to(model.dtype)).argmax(dim=1).cpu()
+            )
+        )
+
     device = X_test.device
     # 10x the data by making a copy of each row and editing the
     # concept to be each of the 10 classes
@@ -150,12 +160,12 @@ def evaluate_model(
         for source in range(NUM_CLASSES):
             for target in range(NUM_CLASSES):
                 mask = (Y_test == source) & (Y_target == target)
-                losses[source, target] = model.loss(X_test[mask], Y_test[mask])
+                losses[source, target] = eval_metric(X_test[mask], Y_test[mask])
         return losses
     elif eval_against_target:
-        return model.loss(X_test, Y_target)
+        return eval_metric(X_test, Y_target)
     else:
-        return model.loss(X_test, Y_test)
+        return eval_metric(X_test, Y_test)
 
 
 def main():
@@ -178,16 +188,47 @@ def main():
         for editing_mode in editing_modes:
             print(f"Evaluating {cls.__name__} with {editing_mode} editor...")
             editor = get_editor(editing_mode, X_train, Y_train)
-            loss_edited = evaluate_model(
-                model, X_test, Y_test, editor=editor, eval_against_target=True
-            )
-            loss_against_source_edited = evaluate_model(
-                model, X_test, Y_test, editor=editor, eval_against_target=False
-            )
-            loss_matrix = evaluate_model(
-                model, X_test, Y_test, editor=editor, compute_by_class=True
-            )
-            loss = model.loss(X_test, Y_test)
+            with torch.no_grad():
+                model.eval()
+
+                loss_edited = evaluate_model(
+                    model, X_test, Y_test, editor=editor, eval_against_target=True
+                )
+                loss_against_source_edited = evaluate_model(
+                    model, X_test, Y_test, editor=editor, eval_against_target=False
+                )
+                loss_matrix = evaluate_model(
+                    model, X_test, Y_test, editor=editor, compute_by_class=True
+                )
+                loss = model.loss(X_test, Y_test)
+
+                acc_edited = evaluate_model(
+                    model,
+                    X_test,
+                    Y_test,
+                    editor=editor,
+                    eval_against_target=True,
+                    metric="top1",
+                )
+                acc_against_source_edited = evaluate_model(
+                    model,
+                    X_test,
+                    Y_test,
+                    editor=editor,
+                    eval_against_target=False,
+                    metric="top1",
+                )
+                acc_matrix = evaluate_model(
+                    model,
+                    X_test,
+                    Y_test,
+                    editor=editor,
+                    compute_by_class=True,
+                    metric="top1",
+                )
+                acc = accuracy_score(
+                    Y_test.cpu(), model(X_test.to(model.dtype)).argmax(dim=1).cpu()
+                )
             results.append(
                 {
                     "model": cls.__name__ + cfg_str,
@@ -196,6 +237,10 @@ def main():
                     "edited_loss_against_target": loss_edited,
                     "edited_loss_against_source": loss_against_source_edited,
                     "loss_matrix": loss_matrix.cpu().numpy().tolist(),
+                    "top1": acc,
+                    "edited_top1_against_target": acc_edited,
+                    "edited_top1_against_source": acc_against_source_edited,
+                    "top1_matrix": acc_matrix.cpu().numpy().tolist(),
                     "n_test": X_test.shape[0],
                     "n_train": X_train.shape[0],
                 }
