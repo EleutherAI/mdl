@@ -1,6 +1,8 @@
+import json
+import random
 from typing import Callable, Literal
 
-import pandas as pd
+import numpy as np
 import torch
 from concept_erasure import QuadraticFitter
 from sklearn.metrics import accuracy_score
@@ -179,8 +181,8 @@ def main():
     ]
     editing_modes = ["quadratic", "linear"]
     for cls, cfg in model_configs:
-        print(f"Training {cls.__name__}...")
         cfg_str = f"(num_layers={cfg['num_layers']})" if cls == MlpProbe else ""
+        print(f"Training {cls.__name__} {cfg_str}...")
         X_train, X_test, Y_train, Y_test = get_train_test_data(
             cls, total_size=None, test_size=1024
         )
@@ -233,26 +235,36 @@ def main():
                 {
                     "model": cls.__name__ + cfg_str,
                     "editing_mode": editing_mode,
-                    "loss": loss,
-                    "edited_loss_against_target": loss_edited,
-                    "edited_loss_against_source": loss_against_source_edited,
+                    "loss": float(loss),
+                    "edited_loss_against_target": float(loss_edited),
+                    "edited_loss_against_source": float(loss_against_source_edited),
                     "loss_matrix": loss_matrix.cpu().numpy().tolist(),
-                    "top1": acc,
-                    "edited_top1_against_target": acc_edited,
-                    "edited_top1_against_source": acc_against_source_edited,
+                    "top1": float(acc),
+                    "edited_top1_against_target": float(acc_edited),
+                    "edited_top1_against_source": float(acc_against_source_edited),
                     "top1_matrix": acc_matrix.cpu().numpy().tolist(),
-                    "n_test": X_test.shape[0],
-                    "n_train": X_train.shape[0],
+                    "n_test": int(X_test.shape[0]),
+                    "n_train": int(X_train.shape[0]),
                 }
             )
             print(f"Loss without editing: {loss}")
             print(f"Loss against target with editing: {loss_edited}")
             print(f"Loss against source with editing: {loss_against_source_edited}")
+            print(f"Loss matrix: {loss_matrix}")
+            print(f"Top-1 without editing: {acc}")
+            print(f"Top-1 against target with editing: {acc_edited}")
+            print(f"Top-1 against source with editing: {acc_against_source_edited}")
+            print(f"Top-1 matrix: {acc_matrix}")
             print()
 
-    df = pd.DataFrame(results)
-    df.to_json("../data/CIFAR_editing_results.json", orient="records", indent=2)
+    with open("../data/CIFAR_editing_results.json", "w") as f:
+        json.dump(results, f)
 
 
 if __name__ == "__main__":
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed(42)
+    torch.backends.cudnn.deterministic = True
     main()
