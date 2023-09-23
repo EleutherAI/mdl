@@ -42,7 +42,7 @@ class Probe(nn.Module, ABC):
         *,
         batch_size: int = 32,
         early_stop_epochs: int = 4,
-        max_epochs: int = 100,
+        max_epochs: int = 50,
         preprocessor: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
         seed: int = 42,
         verbose: bool = False,
@@ -62,7 +62,7 @@ class Probe(nn.Module, ABC):
             seed: Random seed for shuffling the data.
             tol: Tolerance for the L-BFGS optimizer.
             verbose: Whether to display a progress bar.
-            return_validation_losses: whether to return the validation losses of each epoch.
+            return_validation_losses: Whether to return val losses of each epoch.
 
         Returns:
             The negative log-likelihood of each chunk of data.
@@ -98,7 +98,10 @@ class Probe(nn.Module, ABC):
 
         for _ in pbar:
             # Check early stop criterion
-            if opt.param_groups[0]["lr"] < opt.defaults["lr"] * 0.5 ** early_stop_epochs:
+            if (
+                opt.param_groups[0]["lr"]
+                < opt.defaults["lr"] * 0.5**early_stop_epochs
+            ):
                 break
 
             # Train on batches
