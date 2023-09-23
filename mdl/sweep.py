@@ -56,7 +56,7 @@ class Sweep:
     num_features: int
     num_classes: int = 2
 
-    min_trials: int = 100
+    num_trials: int = 5
     """Minimum number of trials to use for each chunk size."""
 
     num_chunks: int = 10
@@ -89,7 +89,6 @@ class Sweep:
     def __post_init__(self):
         assert self.num_features > 0
         assert self.num_classes > 1
-        assert self.min_trials > 1, "Must use at least two trials per chunk"
 
     def build_optimizer(
         self, n: int
@@ -116,7 +115,7 @@ class Sweep:
         N, d = len(x), self.num_features
         rng = torch.Generator(device=self.device).manual_seed(self.seed)
 
-        val_size = min(1024, round(N * self.val_frac))
+        val_size = min(2048, round(N * self.val_frac))
         N = N - val_size
 
         # Determining the appropriate size for the smallest chunk is a bit tricky. We
@@ -128,27 +127,23 @@ class Sweep:
         parts = partition_logspace(N, self.num_chunks, min_size)
         cumsizes = list(accumulate(parts))
 
-        # Number of trials needed at the smallest chunk size to reduce the variance
-        # of the MDL estimate to a reasonable level
-        max_trials = min(25, self.min_trials * round(N / min_size))
-
         # Generate max_trials different permutations of the data
         master_indices = torch.stack(
             [
                 torch.randperm(len(x), device=self.device, generator=rng)
-                for _ in range(max_trials)
+                for _ in range(self.num_trials)
             ]
         )
 
         # Create vectorized loss function
         loss_fn = vmap(bce_with_logits if self.num_classes == 2 else cross_entropy)
 
-        curve, stderrs = [], []
+        curve = []
         total_mdl = 0.0
         total_trials = 0
 
         for n, next_n in zip(cumsizes, cumsizes[1:]):
-            num_trials = min(25, self.min_trials * round(N / n))
+            num_trials = self.num_trials
             total_trials += num_trials
 
             print(f"Sample size: {n}")
@@ -171,7 +166,7 @@ class Sweep:
             # for each trial?
             while opt.param_groups[0]["lr"] > opt.defaults["lr"] * 0.5**4:
                 # Single epoch on the training set
-                for batch in indices.chunk(self.batch_size, dim=1):
+                for batch in indices.split(self.batch_size, dim=1):
                     opt.zero_grad()
 
                     # We just sum the loss across different trials since they don't
@@ -183,21 +178,31 @@ class Sweep:
                 # Evaluate on the validation set
                 with torch.no_grad():
                     # Update learning rate schedule
-                    val_loss = loss_fn(fwd(x[val_indices]), y[val_indices]).mean()
+                    val_loss = 0.0
+
+                    for batch in val_indices.split(self.batch_size, dim=1):
+                        losses = loss_fn(fwd(x[batch]), y[batch], reduction="sum")
+                        val_loss += losses.mean() / math.log(2)  # Average over trials
+
+                    val_loss /= val_size
                     schedule.step(val_loss)
-                    print(f"Validation loss: {val_loss.item() / math.log(2):.4f}")
+                    print(f"Validation loss: {float(val_loss):.4f} n = {val_size}")
 
             # Evaluate on the next chunk
             with torch.no_grad():
                 indices = master_indices[:num_trials, n:next_n]
-                losses = loss_fn(fwd(x[indices]), y[indices]) / math.log(2)
+                test_loss = 0.0
 
-                loss_var, loss_avg = torch.var_mean(losses)
-                curve.append(loss_avg.item())
-                # stderrs.append(math.sqrt(loss_var.item() / num_trials))
-                print(f"Test loss: {loss_avg.item():.4f}")
+                for batch in indices.split(self.batch_size, dim=1):
+                    losses = loss_fn(fwd(x[batch]), y[batch], reduction="sum")
+                    test_loss += losses.mean() / math.log(2)  # Average over trials
+
+                test_loss /= next_n - n
+
+                curve.append(float(test_loss))
+                print(f"Test loss: {test_loss:.4f} n = {next_n - n}")
 
                 # Update MDL estimate
-                total_mdl += n * loss_avg.item()
+                total_mdl += n * test_loss
 
         return MdlResult(total_mdl / N, curve, cumsizes[1:], total_trials)

@@ -16,18 +16,18 @@ class QuadraticProbe(Probe):
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
+        self.norm = nn.BatchNorm1d(num_classes)
         self.bilinear = nn.Bilinear(
             num_features,
             num_features,
             num_classes,
+            bias=False,
             device=device,
             dtype=dtype,
         )
-        # nn.Bilinear already has a bias term, so we don't need to add one here
         self.linear = nn.Linear(
             num_features,
             num_classes,
-            bias=False,
             device=device,
             dtype=dtype,
         )
@@ -36,4 +36,4 @@ class QuadraticProbe(Probe):
         return optim.AdamW(self.parameters())
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.bilinear(x, x) + self.linear(x)
+        return self.norm(self.bilinear(x, x)) + self.linear(x)
