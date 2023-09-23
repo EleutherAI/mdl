@@ -154,6 +154,7 @@ def evaluate_model(
         .to(device)
     )
     Y_test = Y_test.to(device)
+    Y_eval = Y_target if eval_against_target else Y_test
 
     if compute_by_class:
         losses = torch.zeros(
@@ -162,12 +163,9 @@ def evaluate_model(
         for source in range(NUM_CLASSES):
             for target in range(NUM_CLASSES):
                 mask = (Y_test == source) & (Y_target == target)
-                losses[source, target] = eval_metric(X_test[mask], Y_test[mask])
+                losses[source, target] = eval_metric(X_test[mask], Y_eval[mask])
         return losses
-    elif eval_against_target:
-        return eval_metric(X_test, Y_target)
-    else:
-        return eval_metric(X_test, Y_test)
+    return eval_metric(X_test, Y_eval)
 
 
 def main():
@@ -199,8 +197,16 @@ def main():
                 loss_against_source_edited = evaluate_model(
                     model, X_test, Y_test, editor=editor, eval_against_target=False
                 )
-                loss_matrix = evaluate_model(
+                loss_matrix_against_source = evaluate_model(
                     model, X_test, Y_test, editor=editor, compute_by_class=True
+                )
+                loss_matrix_against_target = evaluate_model(
+                    model,
+                    X_test,
+                    Y_test,
+                    editor=editor,
+                    eval_against_target=True,
+                    compute_by_class=True,
                 )
                 loss = model.loss(X_test, Y_test)
 
@@ -220,11 +226,20 @@ def main():
                     eval_against_target=False,
                     metric="top1",
                 )
-                acc_matrix = evaluate_model(
+                acc_matrix_against_source = evaluate_model(
                     model,
                     X_test,
                     Y_test,
                     editor=editor,
+                    compute_by_class=True,
+                    metric="top1",
+                )
+                acc_matrix_against_target = evaluate_model(
+                    model,
+                    X_test,
+                    Y_test,
+                    editor=editor,
+                    eval_against_target=True,
                     compute_by_class=True,
                     metric="top1",
                 )
@@ -236,13 +251,23 @@ def main():
                     "model": cls.__name__ + cfg_str,
                     "editing_mode": editing_mode,
                     "loss": float(loss),
-                    "edited_loss_against_target": float(loss_edited),
                     "edited_loss_against_source": float(loss_against_source_edited),
-                    "loss_matrix": loss_matrix.cpu().numpy().tolist(),
+                    "edited_loss_against_target": float(loss_edited),
+                    "loss_matrix_against_source": loss_matrix_against_source.cpu()
+                    .numpy()
+                    .tolist(),
+                    "loss_matrix_against_target": loss_matrix_against_target.cpu()
+                    .numpy()
+                    .tolist(),
                     "top1": float(acc),
-                    "edited_top1_against_target": float(acc_edited),
                     "edited_top1_against_source": float(acc_against_source_edited),
-                    "top1_matrix": acc_matrix.cpu().numpy().tolist(),
+                    "edited_top1_against_target": float(acc_edited),
+                    "top1_matrix_against_source": acc_matrix_against_source.cpu()
+                    .numpy()
+                    .tolist(),
+                    "top1_matrix_against_target": acc_matrix_against_target.cpu()
+                    .numpy()
+                    .tolist(),
                     "n_test": int(X_test.shape[0]),
                     "n_train": int(X_train.shape[0]),
                 }
@@ -250,11 +275,13 @@ def main():
             print(f"Loss without editing: {loss}")
             print(f"Loss against target with editing: {loss_edited}")
             print(f"Loss against source with editing: {loss_against_source_edited}")
-            print(f"Loss matrix: {loss_matrix}")
+            print(f"Loss matrix against source: {loss_matrix_against_source}")
+            print(f"Loss matrix against target: {loss_matrix_against_target}")
             print(f"Top-1 without editing: {acc}")
             print(f"Top-1 against target with editing: {acc_edited}")
             print(f"Top-1 against source with editing: {acc_against_source_edited}")
-            print(f"Top-1 matrix: {acc_matrix}")
+            print(f"Top-1 matrix against source: {acc_matrix_against_source}")
+            print(f"Top-1 matrix against target: {acc_matrix_against_target}")
             print()
 
     with open("../data/CIFAR_editing_results.json", "w") as f:
