@@ -16,6 +16,7 @@ NUM_CLASSES = 10
 
 
 def fit_linear_editor(X: torch.Tensor, Z: torch.Tensor, num_classes: int):
+    """A linear editor is just a translation between class conditional means."""
     N, D = X.shape
     assert Z.shape == (N,)
 
@@ -39,9 +40,11 @@ def fit_linear_editor(X: torch.Tensor, Z: torch.Tensor, num_classes: int):
         assert source_z.max() < num_classes
         assert target_z.max() < num_classes
 
-        device = X_eval.device
+        device, dtype = X_eval.device, X_eval.dtype
 
-        X_eval_target = X_eval + translation_maps.to(device)[source_z, target_z]
+        X_eval_target = (
+            X_eval + translation_maps.to(device).to(dtype)[source_z, target_z]
+        )
         return X_eval_target
 
     return editor
@@ -89,7 +92,7 @@ def get_editor(
     kind: Literal["linear", "quadratic"], X_train: torch.Tensor, Y_train: torch.Tensor
 ):
     # We need to flatten the data (in the VisionProbe case it's not already flat)
-    X_train = X_train.view(X_train.shape[0], -1).cpu()
+    X_train = X_train.view(X_train.shape[0], -1).cpu().double()
     Y_train = Y_train.cpu()
     if kind == "quadratic":
         fitter_cls = QuadraticFitter
@@ -104,11 +107,14 @@ def get_editor(
             assert source_z.max() < NUM_CLASSES
             assert target_z.max() < NUM_CLASSES
 
+            X_eval = X_eval.to(X_train.device).to(X_train.dtype)
             X_eval_target = X_eval.clone()
-            # TODO: use groupby for efficiency
+            target_z = target_z.to(X_train.device)
+            source_z = source_z.to(X_train.device)
+
             for i in range(NUM_CLASSES):
                 X_eval_target[target_z == i] = fitter_editor(
-                    X_eval[target_z == i].cpu(), source_z[target_z == i].cpu(), i
+                    X_eval[target_z == i], source_z[target_z == i].cpu(), i
                 ).to(X_eval.device)
             return X_eval_target
 
@@ -169,7 +175,6 @@ def evaluate_model(
 
 
 def main():
-    # TODO: add 5-10 layer MLP
     results = []
     model_configs = [
         (MlpProbe, dict(num_layers=2)),

@@ -16,7 +16,7 @@ class QuadraticProbe(Probe):
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
-        self.norm = nn.BatchNorm1d(num_classes)
+        self.norm = nn.BatchNorm1d(num_classes, device=device, dtype=dtype)
         self.bilinear = nn.Bilinear(
             num_features,
             num_features,
