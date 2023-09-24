@@ -51,10 +51,10 @@ def fit_linear_editor(X: torch.Tensor, Z: torch.Tensor, num_classes: int):
 
 
 def get_train_test_data(
-    model_cls: type[Probe],
     download_dir: str = "/mnt/ssd-1/alexm/cifar10",
     test_size: int = 1024,
     total_size: int | None = None,
+    flatten: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     data = CIFAR10(root=download_dir, download=True)
     images, labels = zip(*data)
@@ -67,7 +67,7 @@ def get_train_test_data(
     perm = torch.randperm(len(X), generator=rng, device=X.device)
     X, Y = X[perm][:total_size], Y[perm][:total_size]
 
-    if not issubclass(model_cls, VisionProbe):
+    if flatten:
         X = X.view(X.shape[0], -1)  # n x d
 
     X_train, X_test = X[:-test_size], X[-test_size:]
@@ -89,7 +89,10 @@ def train_model(
 
 
 def get_editor(
-    kind: Literal["linear", "quadratic"], X_train: torch.Tensor, Y_train: torch.Tensor
+    kind: Literal["linear", "quadratic"],
+    X_train: torch.Tensor,
+    Y_train: torch.Tensor,
+    return_fitter=False,
 ):
     # We need to flatten the data (in the VisionProbe case it's not already flat)
     X_train = X_train.view(X_train.shape[0], -1).cpu().double()
@@ -118,6 +121,8 @@ def get_editor(
                 ).to(X_eval.device)
             return X_eval_target
 
+        if return_fitter:
+            return editor, fitter
         return editor
     else:
         return fit_linear_editor(X_train, Y_train, num_classes=NUM_CLASSES)
@@ -175,6 +180,7 @@ def evaluate_model(
 
 
 def main():
+    # TODO: use multiple seeds
     results = []
     model_configs = [
         (MlpProbe, dict(num_layers=2)),
@@ -187,7 +193,7 @@ def main():
         cfg_str = f"(num_layers={cfg['num_layers']})" if cls == MlpProbe else ""
         print(f"Training {cls.__name__} {cfg_str}...")
         X_train, X_test, Y_train, Y_test = get_train_test_data(
-            cls, total_size=None, test_size=1024
+            total_size=None, test_size=1024, flatten=cls != VisionProbe
         )
         model = train_model(cls, X_train, Y_train)
         for editing_mode in editing_modes:
