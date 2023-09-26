@@ -144,6 +144,10 @@ class Probe(nn.Module, ABC):
         if return_validation_losses:
             return val_losses
 
+    def loss_fn(self, logits: Tensor, target: Tensor) -> Tensor:
+        """Computes the loss of the probe on the given data."""
+        return cross_entropy(logits, target) / math.log(2)
+
     def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
-        return cross_entropy(self(x.to(self.dtype)).squeeze(-1), y) / math.log(2)
+        return self.loss_fn(self(x.to(self.dtype)).squeeze(-1), y)

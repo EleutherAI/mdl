@@ -23,6 +23,11 @@ class VisionProbe(Probe):
 
         net = tv.models.get_model(model, num_classes=num_classes)
         self.net = net.to(device=device, dtype=dtype)  # type: ignore
+        if model == "resnet18":
+            self.net.conv1 = torch.nn.Conv2d(
+                3, 64, kernel_size=3, stride=1, padding="same", bias=False
+            )
+            self.net.maxpool = torch.nn.Identity()
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.weight_decay = weight_decay

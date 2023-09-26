@@ -1,4 +1,6 @@
+import argparse
 import json
+import os
 import random
 from typing import Callable, Literal
 
@@ -55,20 +57,27 @@ def get_train_test_data(
     test_size: int | None = None,
     train_size: int | None = None,
     flatten: bool = False,
+    device="cuda",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     train_data = CIFAR10(root=download_dir, download=True)
     test_data = CIFAR10(root=download_dir, train=False, download=True)
-    X_train, Y_train = prepare_data(train_data, size=train_size, flatten=flatten)
-    X_test, Y_test = prepare_data(test_data, size=test_size, flatten=flatten)
+    X_train, Y_train = prepare_data(
+        train_data, size=train_size, flatten=flatten, device=device
+    )
+    X_test, Y_test = prepare_data(
+        test_data, size=test_size, flatten=flatten, device=device
+    )
     print("Train size:", len(X_train))
     print("Test size:", len(X_test))
     return X_train, X_test, Y_train, Y_test
 
 
-def prepare_data(data: CIFAR10, size: int | None = None, flatten: bool = False):
+def prepare_data(
+    data: CIFAR10, size: int | None = None, flatten: bool = False, device="cuda"
+):
     images, labels = zip(*data)
 
-    X = torch.stack(list(map(to_tensor, images))).to("cuda:3")  # n x c x w x h
+    X = torch.stack(list(map(to_tensor, images))).to(device)  # n x c x w x h
     Y = torch.tensor(labels).to(X.device)
 
     # Shuffle deterministically
@@ -147,24 +156,19 @@ def evaluate_model(
     X_test: torch.Tensor = None,
     Y_test: torch.Tensor = None,
     editor: Callable = None,
-    eval_against_target: bool = True,
-    compute_by_class: bool = False,
-    metric: Literal["loss", "top1"] = "loss",
 ) -> torch.Tensor:
     model.eval()
 
-    def eval_metric(x, y, batch_size=128):
+    def get_logits(x, batch_size=128):
         x_batches = x.to(model.dtype).split(batch_size)
-        y_batches = y.split(batch_size)
-        total_score = 0.0
-        for x_batch, y_batch in zip(x_batches, y_batches):
-            if metric == "loss":
-                total_score += model.loss(x_batch, y_batch).item()
-            else:
-                total_score += accuracy_score(
-                    y_batch.cpu(), model(x_batch).argmax(dim=1).cpu()
-                )
-        return total_score / len(x_batches)
+        logits = torch.cat([model(x_batch) for x_batch in x_batches])
+        return logits
+
+    def eval_metric(logits, y, metric: Literal["loss", "top1"] = "top1"):
+        if metric == "loss":
+            return model.loss_fn(logits, y).item()
+        else:
+            return float(accuracy_score(y.cpu(), logits.argmax(dim=1).cpu()))
 
     device = X_test.device
     # 9x the data by making a copy of each row and editing the
@@ -176,11 +180,6 @@ def evaluate_model(
         .repeat_interleave(len(X_test) // NUM_CLASSES)
         .to(device)
     )
-    if not compute_by_class:
-        mask = Y_target != Y_test
-        X_test = X_test[mask]
-        Y_test = Y_test[mask]
-        Y_target = Y_target[mask]
 
     # we must flatten the data before passing it to the fitter
     X_test_flat = X_test.view(X_test.shape[0], -1)
@@ -190,21 +189,34 @@ def evaluate_model(
         .to(device)
     )
     Y_test = Y_test.to(device)
-    Y_eval = Y_target if eval_against_target else Y_test
+    logits = get_logits(X_test)
+    results = dict()
+    for metric in ["loss", "top1"]:
+        results[metric] = eval_metric(logits, Y_test, metric)
 
-    if compute_by_class:
-        losses = torch.zeros(
-            (NUM_CLASSES, NUM_CLASSES), device=device
-        )  # source -> target
-        for source in range(NUM_CLASSES):
-            for target in range(NUM_CLASSES):
-                mask = (Y_test == source) & (Y_target == target)
-                losses[source, target] = eval_metric(X_test[mask], Y_eval[mask])
-        return losses
-    return eval_metric(X_test, Y_eval)
+        for eval_against in ["source", "target"]:
+            Y_eval = Y_test if eval_against == "source" else Y_target
+
+            # Make metric matrix
+            mat = np.zeros((NUM_CLASSES, NUM_CLASSES))  # source -> target
+            for source in range(NUM_CLASSES):
+                for target in range(NUM_CLASSES):
+                    mask = (Y_test == source) & (Y_target == target)
+                    mat[source, target] = eval_metric(
+                        logits[mask], Y_eval[mask], metric
+                    )
+            results[f"{metric}_matrix_against_{eval_against}"] = mat.tolist()
+
+            # Evaluate on all non-id edits
+            mask = Y_target != Y_test
+            results[f"{metric}_against_{eval_against}_edited"] = eval_metric(
+                logits[mask], Y_eval[mask], metric
+            )
+    return results
 
 
-def main():
+def main(args):
+    results = []
     seeds = [0, 1, 2, 3, 4]
     for seed in seeds:
         random.seed(seed)
@@ -212,7 +224,6 @@ def main():
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
-        results = []
         model_configs = [
             (MlpProbe, dict(num_layers=2)),
             (MlpProbe, dict(num_layers=6)),
@@ -224,110 +235,44 @@ def main():
             cfg_str = f"(num_layers={cfg['num_layers']})" if cls == MlpProbe else ""
             print(f"Training {cls.__name__} {cfg_str}...")
             X_train, X_test, Y_train, Y_test = get_train_test_data(
-                train_size=None, test_size=2048, flatten=cls != VisionProbe
+                train_size=args.train_size,
+                test_size=args.test_size,
+                flatten=cls != VisionProbe,
+                download_dir=args.download_dir,
+                device=args.device,
             )
             model = train_model(cls, X_train, Y_train)
             for editing_mode in editing_modes:
                 print(f"Evaluating {cls.__name__} with {editing_mode} editor...")
                 editor = get_editor(editing_mode, X_train, Y_train)
                 with torch.no_grad():
-                    loss_edited = evaluate_model(
-                        model, X_test, Y_test, editor=editor, eval_against_target=True
-                    )
-                    loss_against_source_edited = evaluate_model(
-                        model, X_test, Y_test, editor=editor, eval_against_target=False
-                    )
-                    loss_matrix_against_source = evaluate_model(
-                        model, X_test, Y_test, editor=editor, compute_by_class=True
-                    )
-                    loss_matrix_against_target = evaluate_model(
-                        model,
-                        X_test,
-                        Y_test,
-                        editor=editor,
-                        eval_against_target=True,
-                        compute_by_class=True,
-                    )
-                    loss = model.loss(X_test, Y_test)
-
-                    acc_edited = evaluate_model(
-                        model,
-                        X_test,
-                        Y_test,
-                        editor=editor,
-                        eval_against_target=True,
-                        metric="top1",
-                    )
-                    acc_against_source_edited = evaluate_model(
-                        model,
-                        X_test,
-                        Y_test,
-                        editor=editor,
-                        eval_against_target=False,
-                        metric="top1",
-                    )
-                    acc_matrix_against_source = evaluate_model(
-                        model,
-                        X_test,
-                        Y_test,
-                        editor=editor,
-                        compute_by_class=True,
-                        metric="top1",
-                    )
-                    acc_matrix_against_target = evaluate_model(
-                        model,
-                        X_test,
-                        Y_test,
-                        editor=editor,
-                        eval_against_target=True,
-                        compute_by_class=True,
-                        metric="top1",
-                    )
-                    acc = accuracy_score(
-                        Y_test.cpu(), model(X_test.to(model.dtype)).argmax(dim=1).cpu()
-                    )
+                    eval_result = evaluate_model(model, X_test, Y_test, editor)
                 results.append(
                     {
                         "model": cls.__name__ + cfg_str,
                         "editing_mode": editing_mode,
-                        "loss": float(loss),
-                        "edited_loss_against_source": float(loss_against_source_edited),
-                        "edited_loss_against_target": float(loss_edited),
-                        "loss_matrix_against_source": loss_matrix_against_source.cpu()
-                        .numpy()
-                        .tolist(),
-                        "loss_matrix_against_target": loss_matrix_against_target.cpu()
-                        .numpy()
-                        .tolist(),
-                        "top1": float(acc),
-                        "edited_top1_against_source": float(acc_against_source_edited),
-                        "edited_top1_against_target": float(acc_edited),
-                        "top1_matrix_against_source": acc_matrix_against_source.cpu()
-                        .numpy()
-                        .tolist(),
-                        "top1_matrix_against_target": acc_matrix_against_target.cpu()
-                        .numpy()
-                        .tolist(),
                         "n_test": int(X_test.shape[0]),
                         "n_train": int(X_train.shape[0]),
                         "seed": seed,
+                        **eval_result,
                     }
                 )
-                print(f"Loss without editing: {loss}")
-                print(f"Loss against target with editing: {loss_edited}")
-                print(f"Loss against source with editing: {loss_against_source_edited}")
-                print(f"Loss matrix against source: {loss_matrix_against_source}")
-                print(f"Loss matrix against target: {loss_matrix_against_target}")
-                print(f"Top-1 without editing: {acc}")
-                print(f"Top-1 against target with editing: {acc_edited}")
-                print(f"Top-1 against source with editing: {acc_against_source_edited}")
-                print(f"Top-1 matrix against source: {acc_matrix_against_source}")
-                print(f"Top-1 matrix against target: {acc_matrix_against_target}")
+                for k, v in results[-1].items():
+                    print(f"{k}: {v}")
                 print()
 
-    with open("../data/CIFAR_editing_results.json", "w") as f:
+    with open(os.path.join(args.out_dir, "CIFAR_editing_results.json"), "w") as f:
         json.dump(results, f)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--download-dir", type=str, default="/mnt/ssd-1/alexm/cifar10")
+    parser.add_argument("--train-size", type=int, default=None)
+    parser.add_argument("--test-size", type=int, default=None)
+    parser.add_argument("--out-dir", type=str, default=".")  # "../data/"
+    parser.add_argument("--augment-before-edit")
+
+    args = parser.parse_args()
+    main(args)
