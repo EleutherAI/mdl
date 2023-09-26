@@ -33,7 +33,10 @@ class VisionProbe(Probe):
         )
         self.train_augmentor = tv.transforms.Compose(
             [
-                tv.transforms.RandomCrop(transform_size),  # TODO: Make this configurable
+                tv.transforms.RandomHorizontalFlip(),
+                tv.transforms.RandomCrop(
+                    transform_size
+                ),  # TODO: Make this configurable
             ]
         )
         self.test_augmentor = tv.transforms.Compose(
@@ -43,7 +46,12 @@ class VisionProbe(Probe):
         )
 
     def build_optimizer(self) -> optim.Optimizer:
-        return optim.SGD(self.parameters(), lr=self.learning_rate, momentum=self.momentum, weight_decay=self.weight_decay)
+        return optim.SGD(
+            self.parameters(),
+            lr=self.learning_rate,
+            momentum=self.momentum,
+            weight_decay=self.weight_decay,
+        )
 
     def augment_data(self, x: Tensor) -> Tensor:
         return self.train_augmentor(x) if self.training else self.test_augmentor(x)
