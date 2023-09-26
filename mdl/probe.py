@@ -38,7 +38,7 @@ class Probe(nn.Module, ABC):
         x: Tensor,
         y: Tensor,
         *,
-        batch_size: int = 32,
+        batch_size: int = 128,
         early_stop_epochs: int = 4,
         max_epochs: int = 50,
         preprocessor: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
