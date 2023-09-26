@@ -84,7 +84,7 @@ def train_model(
         device=X_train.device,
         dtype=torch.bfloat16,
     )
-    model.fit(X_train, Y_train, verbose=True, max_epochs=200, early_stop_epochs=20)
+    model.fit(X_train, Y_train, verbose=True, max_epochs=100, early_stop_epochs=4)
     return model
 
 
