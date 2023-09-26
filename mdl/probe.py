@@ -1,5 +1,6 @@
 import math
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Callable
 
 import torch
@@ -71,11 +72,11 @@ class Probe(nn.Module, ABC):
         x = x.to(self.dtype)
 
         # Shuffle the data so we don't learn in a weirdly structured order
-        rng = torch.Generator(device=x.device).manual_seed(seed)
-        perm = torch.randperm(len(x), generator=rng, device=x.device)
+        #rng = torch.Generator(device=x.device).manual_seed(seed)
+        perm = torch.randperm(len(x), device=x.device)
         x, y = x[perm], y[perm]
 
-        val_size = min(4096, len(x) // 5)
+        val_size = min(2048, len(x) // 5)
         assert val_size > 0, "Dataset is too small to split into train and val"
         val_losses = []
 
@@ -87,26 +88,19 @@ class Probe(nn.Module, ABC):
         )
 
         opt = self.build_optimizer()
-        schedule = optim.lr_scheduler.ReduceLROnPlateau(
-            opt, factor=0.5, patience=0, threshold=0.01
-        )
         pbar = trange(max_epochs, desc="Epoch", disable=not verbose)
+
+        best_loss = torch.inf
+        best_state = self.state_dict()
+        num_plateaus = 0
 
         self.eval()
         x_val = self.augment_data(x_val)
         x_val = preprocessor(x_val, y_val)
 
         for _ in pbar:
-            # Check early stop criterion
-            if (
-                opt.param_groups[0]["lr"]
-                < opt.defaults["lr"] * 0.5**early_stop_epochs
-            ):
-                break
-
-            # Train on batches
+            ### TRAIN LOOP ###
             self.train()
-
             for x_batch, y_batch in zip(
                 x_train.split(batch_size), y_train.split(batch_size)
             ):
@@ -114,23 +108,44 @@ class Probe(nn.Module, ABC):
 
                 x_batch = self.augment_data(x_batch)
                 x_batch = preprocessor(x_batch, y_batch)
-                self.loss(x_batch, y_batch).backward()
+                loss = self.loss(x_batch, y_batch)
+                loss.backward()
                 opt.step()
-
-            # Validate
+            
+            ### VALIDATION LOOP ###
             with torch.no_grad():
-                self.eval()
+                val_loss = 0.0
 
-                loss = self.loss(x_val, y_val)
-                schedule.step(loss)
+                for x_batch, y_batch in zip(
+                    x_val.split(batch_size), y_val.split(batch_size)
+                ):
+                    val_loss += self.loss(x_batch, y_batch).item()
 
-            val_losses.append(loss.item())
-            pbar.set_postfix(loss=loss.item())
+                num_batches = math.ceil(val_size / batch_size)
+                val_loss /= num_batches
+            
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_state = deepcopy(self.state_dict())
+            else:
+                num_plateaus += 1
+
+                # Early stopping
+                if num_plateaus >= early_stop_epochs:
+                    break
+
+                # Manual ReduceLROnPlateau
+                opt.param_groups[0]["lr"] *= 0.5
+
+            val_losses.append(val_loss)
+            pbar.set_postfix(loss=val_loss)
+
+        # Load parameters with lowest validation loss
+        self.load_state_dict(best_state)
 
         if return_validation_losses:
             return val_losses
 
     def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
-        loss_fn = bce_with_logits if self.num_classes == 2 else cross_entropy
-        return loss_fn(self(x.to(self.dtype)).squeeze(-1), y) / math.log(2)
+        return cross_entropy(self(x.to(self.dtype)).squeeze(-1), y) / math.log(2)
