@@ -6,9 +6,6 @@ from typing import Callable
 import torch
 from torch import Tensor, nn, optim
 from torch.nn.functional import (
-    binary_cross_entropy_with_logits as bce_with_logits,
-)
-from torch.nn.functional import (
     cross_entropy,
 )
 from tqdm.auto import trange
@@ -72,7 +69,7 @@ class Probe(nn.Module, ABC):
         x = x.to(self.dtype)
 
         # Shuffle the data so we don't learn in a weirdly structured order
-        #rng = torch.Generator(device=x.device).manual_seed(seed)
+        # rng = torch.Generator(device=x.device).manual_seed(seed)
         perm = torch.randperm(len(x), device=x.device)
         x, y = x[perm], y[perm]
 
@@ -111,7 +108,7 @@ class Probe(nn.Module, ABC):
                 loss = self.loss(x_batch, y_batch)
                 loss.backward()
                 opt.step()
-            
+
             ### VALIDATION LOOP ###
             with torch.no_grad():
                 val_loss = 0.0
@@ -123,10 +120,11 @@ class Probe(nn.Module, ABC):
 
                 num_batches = math.ceil(val_size / batch_size)
                 val_loss /= num_batches
-            
+
             if val_loss < best_loss:
                 best_loss = val_loss
                 best_state = deepcopy(self.state_dict())
+                num_plateaus = 0
             else:
                 num_plateaus += 1
 
