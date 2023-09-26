@@ -103,17 +103,7 @@ class Probe(nn.Module, ABC):
         x_val = preprocessor(x_val, y_val)
 
         for _ in pbar:
-            ### VALIDATION LOOP ###
-            with torch.no_grad():
-                val_loss = sum(
-                    self.loss(x_batch, y_batch).item()
-                    for x_batch, y_batch in zip(
-                        x_val.split(batch_size), y_val.split(batch_size)
-                    )
-                )
-
-                num_batches = math.ceil(val_size / batch_size)
-                val_loss /= num_batches
+            val_loss = self.evaluate(x_val, y_val, batch_size)
 
             if val_loss < best_loss:
                 best_loss = val_loss
@@ -155,6 +145,15 @@ class Probe(nn.Module, ABC):
 
         if return_validation_losses:
             return val_losses
+
+    @torch.no_grad()
+    def evaluate(self, x: Tensor, y: Tensor, batch_size: int) -> float:
+        """Compute average loss on `(x, y)` in batches of size `batch_size`."""
+        total_loss = sum(
+            self.loss(x_batch, y_batch).item() * len(x_batch)
+            for x_batch, y_batch in zip(x.split(batch_size), y.split(batch_size))
+        )
+        return total_loss / len(x)
 
     def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
