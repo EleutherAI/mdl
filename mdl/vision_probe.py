@@ -18,8 +18,9 @@ class VisionProbe(Probe):
         model: str = "resnet18",
         device: str | torch.device | None = None,
         dtype: torch.dtype | None = None,
+        num_features: int = 3,  # Unused
     ):
-        super().__init__(3, num_classes, device, dtype)
+        super().__init__(num_features, num_classes, device, dtype)
 
         net = tv.models.get_model(model, num_classes=num_classes)
         self.net = net.to(device=device, dtype=dtype)  # type: ignore

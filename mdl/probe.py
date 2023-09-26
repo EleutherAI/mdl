@@ -45,6 +45,8 @@ class Probe(nn.Module, ABC):
         seed: int = 42,
         verbose: bool = False,
         return_validation_losses: bool = False,
+        x_val: Tensor | None = None,
+        y_val: Tensor | None = None,
     ):
         """Fits the model to the input data using Adam with L2 regularization.
 
@@ -69,17 +71,21 @@ class Probe(nn.Module, ABC):
         x = x.to(self.dtype)
 
         # Shuffle the data so we don't learn in a weirdly structured order
-        # rng = torch.Generator(device=x.device).manual_seed(seed)
-        perm = torch.randperm(len(x), device=x.device)
-        x, y = x[perm], y[perm]
+        if x_val is None or y_val is None:
+            rng = torch.Generator(device=x.device).manual_seed(seed)
+            perm = torch.randperm(len(x), generator=rng, device=x.device)
+            x, y = x[perm], y[perm]
 
-        val_size = min(2048, len(x) // 5)
-        assert val_size > 0, "Dataset is too small to split into train and val"
+            val_size = min(2048, len(x) // 5)
+            assert val_size > 0, "Dataset is too small to split into train and val"
+
+            x_train, y_train = x[val_size:], y[val_size:]
+            x_val, y_val = x[:val_size], y[:val_size]
+        else:
+            x_train, y_train = x, y
+            val_size = len(x_val)
+
         val_losses = []
-
-        x_train, y_train = x[val_size:], y[val_size:]
-        x_val, y_val = x[:val_size], y[:val_size]
-
         y = y.to(
             torch.get_default_dtype() if self.num_classes == 2 else torch.long,
         )

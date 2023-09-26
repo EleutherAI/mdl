@@ -1,12 +1,11 @@
 import math
-from copy import deepcopy
 from dataclasses import dataclass, field
 from itertools import accumulate
 from typing import Any, NamedTuple, Type
 
 import torch
 from scipy.optimize import curve_fit
-from torch import Tensor, nn, optim
+from torch import Tensor
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_with_logits,
 )
@@ -16,7 +15,7 @@ from torch.nn.functional import (
 from tqdm.auto import tqdm
 
 from .math import partition_logspace
-from .mlp_probe import MlpProbe
+from .mlp_probe import MlpProbe, Probe
 
 
 class PowerLaw(NamedTuple):
@@ -62,13 +61,7 @@ class Sweep:
     batch_size: int = 32
     """Batch size to use for fitting the probes."""
 
-    optimizer_cls: Type[optim.Optimizer] = optim.AdamW
-    """Optimizer class to use for fitting the probes."""
-
-    optimizer_kwargs: dict[str, Any] = field(default_factory=dict)
-    """Keyword arguments to pass to the optimizer constructor."""
-
-    probe_cls: Type[nn.Module] = MlpProbe
+    probe_cls: Type[Probe] = MlpProbe
     """Probe class to instantiate."""
 
     probe_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -128,51 +121,10 @@ class Sweep:
                 dtype=self.dtype,
                 **self.probe_kwargs,
             )
-            opt = self.optimizer_cls(probe.parameters(), **self.optimizer_kwargs)
-
-            best_loss = torch.inf
-            best_state = probe.state_dict()
-            schedule = optim.lr_scheduler.ReduceLROnPlateau(
-                opt,
-                factor=0.5,
-                patience=0,
-                threshold=0.01,
-            )
-
-            # Train until we don't improve for four epochs
-            while opt.param_groups[0]["lr"] > opt.defaults["lr"] * 0.5**4:
-                # Single epoch on the training set
-                for x_batch, y_batch in zip(
-                    train_x[:n].split(self.batch_size),
-                    train_y[:n].split(self.batch_size),
-                ):
-                    opt.zero_grad()
-
-                    loss = loss_fn(probe(x_batch), y_batch)
-                    loss.backward()
-                    opt.step()
-
-                # Evaluate on the validation set
-                with torch.no_grad():
-                    # Update learning rate schedule
-                    val_loss = 0.0
-
-                    for x_batch, y_batch in zip(
-                        val_x.split(self.batch_size), val_y.split(self.batch_size)
-                    ):
-                        loss = loss_fn(probe(x_batch), y_batch, reduction="sum")
-                        val_loss += float(loss) / math.log(2)
-
-                    val_loss /= val_size
-                    schedule.step(val_loss)
-
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    best_state = deepcopy(probe.state_dict())
+            probe.fit(train_x[:n], train_y[:n], x_val=val_x, y_val=val_y, verbose=False)
 
             # Evaluate on the next chunk
             with torch.no_grad():
-                probe.load_state_dict(best_state)
                 test_loss = 0.0
 
                 for x_batch, y_batch in zip(
