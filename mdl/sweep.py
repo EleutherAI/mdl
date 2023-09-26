@@ -77,7 +77,7 @@ class Sweep:
         assert self.num_features > 0
         assert self.num_classes > 1
 
-    def run(self, x: Tensor, y: Tensor, seed: int = 0) -> MdlResult:
+    def run(self, x: Tensor, y: Tensor, seed: int = 0, **kwargs) -> MdlResult:
         N, d = len(x), self.num_features
         rng = torch.Generator(device=self.device).manual_seed(seed)
 
@@ -121,7 +121,14 @@ class Sweep:
                 dtype=self.dtype,
                 **self.probe_kwargs,
             )
-            probe.fit(train_x[:n], train_y[:n], x_val=val_x, y_val=val_y, verbose=False)
+            probe.fit(
+                train_x[:n],
+                train_y[:n],
+                x_val=val_x,
+                y_val=val_y,
+                verbose=False,
+                **kwargs,
+            )
 
             # Evaluate on the next chunk
             with torch.no_grad():

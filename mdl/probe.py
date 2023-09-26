@@ -94,6 +94,7 @@ class Probe(nn.Module, ABC):
         pbar = trange(max_epochs, desc="Epoch", disable=not verbose)
 
         best_loss = torch.inf
+        best_opt_state = opt.state_dict()
         best_state = self.state_dict()
         num_plateaus = 0
 
@@ -102,6 +103,40 @@ class Probe(nn.Module, ABC):
         x_val = preprocessor(x_val, y_val)
 
         for _ in pbar:
+            ### VALIDATION LOOP ###
+            with torch.no_grad():
+                val_loss = sum(
+                    self.loss(x_batch, y_batch).item()
+                    for x_batch, y_batch in zip(
+                        x_val.split(batch_size), y_val.split(batch_size)
+                    )
+                )
+
+                num_batches = math.ceil(val_size / batch_size)
+                val_loss /= num_batches
+
+            if val_loss < best_loss:
+                best_loss = val_loss
+                best_opt_state = deepcopy(opt.state_dict())
+                best_state = deepcopy(self.state_dict())
+                num_plateaus = 0
+            else:
+                num_plateaus += 1
+
+                # Early stopping
+                if num_plateaus >= early_stop_epochs:
+                    break
+
+                # Backtrack
+                opt.load_state_dict(best_opt_state)
+                self.load_state_dict(best_state)
+
+                # Manual ReduceLROnPlateau
+                opt.param_groups[0]["lr"] *= 0.5
+
+            val_losses.append(best_loss)
+            pbar.set_postfix(loss=best_loss)
+
             ### TRAIN LOOP ###
             self.train()
             for x_batch, y_batch in zip(
@@ -114,35 +149,6 @@ class Probe(nn.Module, ABC):
                 loss = self.loss(x_batch, y_batch)
                 loss.backward()
                 opt.step()
-
-            ### VALIDATION LOOP ###
-            with torch.no_grad():
-                val_loss = 0.0
-
-                for x_batch, y_batch in zip(
-                    x_val.split(batch_size), y_val.split(batch_size)
-                ):
-                    val_loss += self.loss(x_batch, y_batch).item()
-
-                num_batches = math.ceil(val_size / batch_size)
-                val_loss /= num_batches
-
-            if val_loss < best_loss:
-                best_loss = val_loss
-                best_state = deepcopy(self.state_dict())
-                num_plateaus = 0
-            else:
-                num_plateaus += 1
-
-                # Early stopping
-                if num_plateaus >= early_stop_epochs:
-                    break
-
-                # Manual ReduceLROnPlateau
-                opt.param_groups[0]["lr"] *= 0.5
-
-            val_losses.append(val_loss)
-            pbar.set_postfix(loss=val_loss)
 
         # Load parameters with lowest validation loss
         self.load_state_dict(best_state)
