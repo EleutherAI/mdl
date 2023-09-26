@@ -10,9 +10,8 @@ class VisionProbe(Probe):
 
     def __init__(
         self,
-        num_features: int,
         num_classes: int = 2,
-        transform_size: int = 32,
+        image_size: int = 32,
         learning_rate: float = 0.005,
         momentum: float = 0.9,
         weight_decay: float = 5e-4,
@@ -20,7 +19,7 @@ class VisionProbe(Probe):
         device: str | torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
-        super().__init__(num_features, num_classes, device, dtype)
+        super().__init__(3, num_classes, device, dtype)
 
         net = tv.models.get_model(model, num_classes=num_classes)
         self.net = net.to(device=device, dtype=dtype)  # type: ignore
@@ -31,17 +30,12 @@ class VisionProbe(Probe):
             (0.485, 0.456, 0.406),
             (0.229, 0.224, 0.225),
         )
+
+        padding = round(image_size * 0.125)
         self.train_augmentor = tv.transforms.Compose(
             [
                 tv.transforms.RandomHorizontalFlip(),
-                tv.transforms.RandomCrop(
-                    transform_size
-                ),  # TODO: Make this configurable
-            ]
-        )
-        self.test_augmentor = tv.transforms.Compose(
-            [
-                tv.transforms.CenterCrop(transform_size),
+                tv.transforms.RandomCrop(image_size, padding=padding),
             ]
         )
 
@@ -54,7 +48,7 @@ class VisionProbe(Probe):
         )
 
     def augment_data(self, x: Tensor) -> Tensor:
-        return self.train_augmentor(x) if self.training else self.test_augmentor(x)
+        return self.train_augmentor(x) if self.training else x
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net(self.norm(x))
