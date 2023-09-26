@@ -126,6 +126,7 @@ class Probe(nn.Module, ABC):
 
             val_losses.append(loss.item())
             pbar.set_postfix(loss=loss.item())
+
         if return_validation_losses:
             return val_losses
 

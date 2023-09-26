@@ -33,15 +33,9 @@ class VisionProbe(Probe):
         )
         self.train_augmentor = tv.transforms.Compose(
             [
+                tv.transforms.Pad(4),
                 tv.transforms.RandomHorizontalFlip(),
-                tv.transforms.RandomCrop(
-                    transform_size
-                ),  # TODO: Make this configurable
-            ]
-        )
-        self.test_augmentor = tv.transforms.Compose(
-            [
-                tv.transforms.CenterCrop(transform_size),
+                tv.transforms.RandomCrop(transform_size),
             ]
         )
 
@@ -54,7 +48,7 @@ class VisionProbe(Probe):
         )
 
     def augment_data(self, x: Tensor) -> Tensor:
-        return self.train_augmentor(x) if self.training else self.test_augmentor(x)
+        return self.train_augmentor(x)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net(self.norm(x))

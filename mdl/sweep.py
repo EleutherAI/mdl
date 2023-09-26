@@ -1,14 +1,12 @@
 import math
 from copy import deepcopy
 from dataclasses import dataclass, field
-from functools import partial
 from itertools import accumulate
-from typing import Any, Callable, NamedTuple, Type
+from typing import Any, NamedTuple, Type
 
 import torch
 from scipy.optimize import curve_fit
 from torch import Tensor, nn, optim
-from torch.func import functional_call, stack_module_state, vmap
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_with_logits,
 )
@@ -42,7 +40,7 @@ class MdlResult:
     """Number of samples used for each chunk."""
 
     total_trials: int
-    """Total number of trials used for the estimation."""
+    """(DEPRECATED) Total number of trials used for the estimation."""
 
     def scaling_law(self) -> PowerLaw:
         """Fits a power law to the cross-entropy curve."""
@@ -57,9 +55,6 @@ class MdlResult:
 class Sweep:
     num_features: int
     num_classes: int = 2
-
-    num_trials: int = 1
-    """Minimum number of trials to use for each chunk size."""
 
     num_chunks: int = 10
     """Number of logarithmically-spaced chunks to split the data into."""
@@ -89,41 +84,12 @@ class Sweep:
         assert self.num_features > 0
         assert self.num_classes > 1
 
-    def build_optimizer(
-        self, n: int
-    ) -> tuple[optim.Optimizer, Callable[[Tensor], Tensor]]:
-        probes = [
-            self.probe_cls(
-                num_features=self.num_features,
-                num_classes=self.num_classes,
-                device=self.device,
-                dtype=self.dtype,
-                **self.probe_kwargs,
-            )
-            for _ in range(n)
-        ]
-        params, buffers = stack_module_state(probes)  # type: ignore
-
-        fwd = partial(functional_call, probes[0])
-        fwd = partial(vmap(fwd), (params, buffers))
-        opt = self.optimizer_cls(params.values(), **self.optimizer_kwargs)
-
-        return opt, fwd
-
     def run(self, x: Tensor, y: Tensor, seed: int = 0) -> MdlResult:
         N, d = len(x), self.num_features
         rng = torch.Generator(device=self.device).manual_seed(seed)
 
         val_size = min(2048, round(N * self.val_frac))
-        test_size = min(2048, round(N * self.val_frac))
-        train_size = N - val_size - test_size
-
-        # Shuffle data
-        indices = torch.randperm(len(x), device=self.device, generator=rng)
-        x, y = x[indices], y[indices]
-
-        train_x, val_x, test_x = x.split([train_size, val_size, test_size])
-        train_y, val_y, test_y = y.split([train_size, val_size, test_size])
+        train_size = N - val_size
 
         # Determining the appropriate size for the smallest chunk is a bit tricky. We
         # want to make sure that we have enough data for at least two minibatches
@@ -131,20 +97,29 @@ class Sweep:
         min_size = min(1024, 2 * max(self.batch_size, self.num_classes, d))
 
         # Split data into num_chunks logarithmically spaced chunks
-        parts = partition_logspace(len(train_x), self.num_chunks, min_size)
+        parts = partition_logspace(train_size, self.num_chunks, min_size)
+
+        # Shuffle data
+        indices = torch.randperm(len(x), device=self.device, generator=rng)
+        x, y = x[indices], y[indices]
+
+        train_x, val_x = x.split([train_size, val_size])
+        train_y, val_y = y.split([train_size, val_size])
+
+        train_size, test_size = train_size - parts[-1], parts[-1]
+        train_x, test_x = train_x.split([train_size, test_size])
+        train_y, test_y = train_y.split([train_size, test_size])
+
         cumsizes = list(accumulate(parts))
+        pbar = tqdm(
+            zip(cumsizes[:-1], cumsizes[1:]), total=len(cumsizes) - 1, unit="scales"
+        )
 
         loss_fn = bce_with_logits if self.num_classes == 2 else cross_entropy
-
         curve = []
-        pbar = tqdm(cumsizes, unit="scales")
         total_mdl = 0.0
-        total_trials = 0
 
-        for n in pbar:
-            num_trials = self.num_trials
-            total_trials += num_trials
-
+        for n, next_n in pbar:
             # Create new optimizer and forward function for this chunk size
             probe = self.probe_cls(
                 num_features=self.num_features,
@@ -165,8 +140,6 @@ class Sweep:
             )
 
             # Train until we don't improve for four epochs
-            # TODO: Perform early stopping and learning rate annealing separately
-            # for each trial?
             while opt.param_groups[0]["lr"] > opt.defaults["lr"] * 0.5**4:
                 # Single epoch on the training set
                 for x_batch, y_batch in zip(
@@ -175,8 +148,6 @@ class Sweep:
                 ):
                     opt.zero_grad()
 
-                    # We just sum the loss across different trials since they don't
-                    # affect one another
                     loss = loss_fn(probe(x_batch), y_batch)
                     loss.backward()
                     opt.step()
@@ -190,7 +161,7 @@ class Sweep:
                         val_x.split(self.batch_size), val_y.split(self.batch_size)
                     ):
                         loss = loss_fn(probe(x_batch), y_batch, reduction="sum")
-                        val_loss += float(loss) / math.log(2)  # Average over trials
+                        val_loss += float(loss) / math.log(2)
 
                     val_loss /= val_size
                     schedule.step(val_loss)
@@ -208,7 +179,7 @@ class Sweep:
                     test_x.split(self.batch_size), test_y.split(self.batch_size)
                 ):
                     loss = loss_fn(probe(x_batch), y_batch, reduction="sum")
-                    test_loss += float(loss) / math.log(2)  # Average over trials
+                    test_loss += float(loss) / math.log(2)
 
                 test_loss /= test_size
 
@@ -216,6 +187,6 @@ class Sweep:
                 pbar.set_postfix(loss=f"{test_loss:.4f}")
 
                 # Update MDL estimate
-                total_mdl += n * test_loss
+                total_mdl += next_n * test_loss
 
-        return MdlResult(total_mdl / len(test_x), curve, cumsizes, total_trials)
+        return MdlResult(total_mdl / train_size, curve, cumsizes, 0)
