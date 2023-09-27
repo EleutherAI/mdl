@@ -75,13 +75,14 @@ class Sweep:
         x: Tensor,
         y: Tensor,
         seed: int = 0,
-        preprocessor: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
+        transform: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
+        **fit_kwargs,
     ) -> MdlResult:
         N, d = len(x), self.num_features
         rng = torch.Generator(device=self.device).manual_seed(seed)
 
         val_size = min(2048, round(N * self.val_frac))
-        train_size = N - val_size
+        nonval_size = N - val_size
 
         # Determining the appropriate size for the smallest chunk is a bit tricky. We
         # want to make sure that we have enough data for at least two minibatches
@@ -89,18 +90,7 @@ class Sweep:
         min_size = min(1024, 2 * max(self.batch_size, self.num_classes, d))
 
         # Split data into num_chunks logarithmically spaced chunks
-        parts = partition_logspace(train_size, self.num_chunks, min_size)
-
-        # Shuffle data
-        indices = torch.randperm(len(x), device=self.device, generator=rng)
-        x, y = x[indices], y[indices]
-
-        train_x, val_x = x.split([train_size, val_size])
-        train_y, val_y = y.split([train_size, val_size])
-
-        train_size, test_size = train_size - parts[-1], parts[-1]
-        train_x, test_x = train_x.split([train_size, test_size])
-        train_y, test_y = train_y.split([train_size, test_size])
+        parts = partition_logspace(nonval_size, self.num_chunks, min_size)
 
         cumsizes = list(accumulate(parts))
         pbar = tqdm(
@@ -111,6 +101,17 @@ class Sweep:
         total_mdl = 0.0
 
         for n, next_n in pbar:
+            # Shuffle data
+            indices = torch.randperm(len(x), device=self.device, generator=rng)
+            x, y = x[indices], y[indices]
+
+            nonval_x, val_x = x.split([nonval_size, val_size])
+            nonval_y, val_y = y.split([nonval_size, val_size])
+
+            train_size, test_size = nonval_size - parts[-1], parts[-1]
+            train_x, test_x = nonval_x.split([train_size, test_size])
+            train_y, test_y = nonval_y.split([train_size, test_size])
+
             probe = self.probe_cls(
                 num_features=self.num_features,
                 num_classes=self.num_classes,
@@ -124,12 +125,13 @@ class Sweep:
                 x_val=val_x,
                 y_val=val_y,
                 verbose=False,
-                preprocessor=preprocessor,
+                transform=transform,
+                **fit_kwargs,
             )
 
             # Compute test loss and add to scaling curve
             test_loss = probe.evaluate(
-                preprocessor(test_x, test_y), test_y, self.batch_size
+                transform(test_x, test_y), test_y, self.batch_size
             )
             curve.append(float(test_loss))
             pbar.set_postfix(loss=f"{test_loss:.4f}")
@@ -137,4 +139,4 @@ class Sweep:
             # Update MDL estimate
             total_mdl += next_n * test_loss
 
-        return MdlResult(total_mdl / train_size, curve, cumsizes, 0)
+        return MdlResult(total_mdl / nonval_size, curve, cumsizes, 0)
