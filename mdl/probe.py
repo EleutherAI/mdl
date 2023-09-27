@@ -99,7 +99,6 @@ class Probe(nn.Module, ABC):
         best_opt_state = opt.state_dict()
         best_state = self.state_dict()
         num_plateaus = 0
-        scaler = torch.cuda.amp.GradScaler()
 
         self.eval()
         x_val = transform(x_val, y_val)
@@ -138,11 +137,8 @@ class Probe(nn.Module, ABC):
                 opt.zero_grad()
 
                 x_batch = transform(augment(x_batch), y_batch)
-                loss = self.loss(x_batch, y_batch)
-                scaler.scale(loss).backward()
-                scaler.step(opt)
-                scaler.update()
-                # opt.step()
+                self.loss(x_batch, y_batch).backward()
+                opt.step()
 
             # Update learning rate
             schedule.step()
@@ -171,39 +167,6 @@ class Probe(nn.Module, ABC):
         )
         return total_loss / len(x)
 
-    def loss(self, x: Tensor, y: Tensor, smoothing: float = 0.1) -> Tensor:
+    def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
-        logits = self(x.to(self.dtype))
-
-        loss = cross_entropy_with_label_smoothing(logits, y, smoothing)
-        return loss / math.log(2)
-
-
-def cross_entropy_with_label_smoothing(logits, targets, smoothing=0.1):
-    """
-    Compute the cross-entropy loss with label smoothing.
-
-    Parameters:
-    - logits: Tensor of shape [batch_size, num_classes] representing the model outputs
-    - targets: Tensor of shape [batch_size] containing the ground-truth labels
-    - smoothing: The label smoothing factor (float)
-
-    Returns:
-    - loss: The computed cross-entropy loss with label smoothing
-    """
-    # Number of classes
-    num_classes = logits.size(1)
-
-    # Create smoothed labels
-    smoothed_labels = torch.full((logits.size()), smoothing / (num_classes - 1)).to(
-        logits.device
-    )
-    smoothed_labels.scatter_(1, targets.unsqueeze(1), 1.0 - smoothing)
-
-    # Compute the log-probabilities
-    log_probs = F.log_softmax(logits, dim=1)
-
-    # Compute the cross-entropy loss with label smoothing
-    loss = -(smoothed_labels * log_probs).sum(dim=1).mean()
-
-    return loss
+        return F.cross_entropy(self(x.to(self.dtype)), y) / math.log(2)
