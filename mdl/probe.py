@@ -6,6 +6,9 @@ from typing import Callable
 import torch
 from torch import Tensor, nn, optim
 from torch.nn.functional import (
+    binary_cross_entropy_with_logits as bce_loss,
+)
+from torch.nn.functional import (
     cross_entropy,
 )
 from tqdm.auto import trange
@@ -105,7 +108,7 @@ class Probe(nn.Module, ABC):
         self.eval()
         x_val = transform(x_val, y_val)
 
-        for _ in pbar:
+        for ep in pbar:
             val_loss = self.evaluate(x_val, y_val, batch_size)
 
             if val_loss < best_loss:
@@ -152,6 +155,14 @@ class Probe(nn.Module, ABC):
         if return_validation_losses:
             return val_losses
 
+    def loss_fn(self, logits: Tensor, target: Tensor) -> Tensor:
+        """Computes the loss of the predictions on the given data."""
+        return (
+            cross_entropy(logits, target.long())
+            if logits.ndim == 2
+            else bce_loss(logits, target)
+        ) / math.log(2)
+
     @torch.no_grad()
     def accuracy(self, x: Tensor, y: Tensor, batch_size: int) -> float:
         """Compute average accuracy on `(x, y)` in batches of size `batch_size`."""
@@ -172,4 +183,4 @@ class Probe(nn.Module, ABC):
 
     def loss(self, x: Tensor, y: Tensor) -> Tensor:
         """Computes the loss of the probe on the given data."""
-        return cross_entropy(self(x.to(self.dtype)).squeeze(-1), y) / math.log(2)
+        return self.loss_fn(self(x.to(self.dtype)).squeeze(-1), y)
