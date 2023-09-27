@@ -1,24 +1,14 @@
-import math
-from copy import deepcopy
 from dataclasses import dataclass, field
-from functools import partial
 from itertools import accumulate
 from typing import Any, Callable, NamedTuple, Type
 
 import torch
 from scipy.optimize import curve_fit
-from torch import Tensor, nn, optim
-from torch.func import functional_call, stack_module_state, vmap
-from torch.nn.functional import (
-    binary_cross_entropy_with_logits as bce_with_logits,
-)
-from torch.nn.functional import (
-    cross_entropy,
-)
+from torch import Tensor
 from tqdm.auto import tqdm
 
 from .math import partition_logspace
-from .mlp_probe import MlpProbe
+from .mlp_probe import MlpProbe, Probe
 
 
 class PowerLaw(NamedTuple):
@@ -42,7 +32,7 @@ class MdlResult:
     """Number of samples used for each chunk."""
 
     total_trials: int
-    """Total number of trials used for the estimation."""
+    """(DEPRECATED) Total number of trials used for the estimation."""
 
     def scaling_law(self) -> PowerLaw:
         """Fits a power law to the cross-entropy curve."""
@@ -58,22 +48,13 @@ class Sweep:
     num_features: int
     num_classes: int = 2
 
-    num_trials: int = 1
-    """Minimum number of trials to use for each chunk size."""
-
     num_chunks: int = 10
     """Number of logarithmically-spaced chunks to split the data into."""
 
     batch_size: int = 32
     """Batch size to use for fitting the probes."""
 
-    optimizer_cls: Type[optim.Optimizer] = optim.AdamW
-    """Optimizer class to use for fitting the probes."""
-
-    optimizer_kwargs: dict[str, Any] = field(default_factory=dict)
-    """Keyword arguments to pass to the optimizer constructor."""
-
-    probe_cls: Type[nn.Module] = MlpProbe
+    probe_cls: Type[Probe] = MlpProbe
     """Probe class to instantiate."""
 
     probe_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -89,41 +70,19 @@ class Sweep:
         assert self.num_features > 0
         assert self.num_classes > 1
 
-    def build_optimizer(
-        self, n: int
-    ) -> tuple[optim.Optimizer, Callable[[Tensor], Tensor]]:
-        probes = [
-            self.probe_cls(
-                num_features=self.num_features,
-                num_classes=self.num_classes,
-                device=self.device,
-                dtype=self.dtype,
-                **self.probe_kwargs,
-            )
-            for _ in range(n)
-        ]
-        params, buffers = stack_module_state(probes)  # type: ignore
-
-        fwd = partial(functional_call, probes[0])
-        fwd = partial(vmap(fwd), (params, buffers))
-        opt = self.optimizer_cls(params.values(), **self.optimizer_kwargs)
-
-        return opt, fwd
-
-    def run(self, x: Tensor, y: Tensor, seed: int = 0) -> MdlResult:
+    def run(
+        self,
+        x: Tensor,
+        y: Tensor,
+        seed: int = 0,
+        transform: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
+        **fit_kwargs,
+    ) -> MdlResult:
         N, d = len(x), self.num_features
         rng = torch.Generator(device=self.device).manual_seed(seed)
 
         val_size = min(2048, round(N * self.val_frac))
-        test_size = min(2048, round(N * self.val_frac))
-        train_size = N - val_size - test_size
-
-        # Shuffle data
-        indices = torch.randperm(len(x), device=self.device, generator=rng)
-        x, y = x[indices], y[indices]
-
-        train_x, val_x, test_x = x.split([train_size, val_size, test_size])
-        train_y, val_y, test_y = y.split([train_size, val_size, test_size])
+        nonval_size = N - val_size
 
         # Determining the appropriate size for the smallest chunk is a bit tricky. We
         # want to make sure that we have enough data for at least two minibatches
@@ -131,21 +90,28 @@ class Sweep:
         min_size = min(1024, 2 * max(self.batch_size, self.num_classes, d))
 
         # Split data into num_chunks logarithmically spaced chunks
-        parts = partition_logspace(len(train_x), self.num_chunks, min_size)
-        cumsizes = list(accumulate(parts))
+        parts = partition_logspace(nonval_size, self.num_chunks, min_size)
 
-        loss_fn = bce_with_logits if self.num_classes == 2 else cross_entropy
+        cumsizes = list(accumulate(parts))
+        pbar = tqdm(
+            zip(cumsizes[:-1], cumsizes[1:]), total=len(cumsizes) - 1, unit="scales"
+        )
 
         curve = []
-        pbar = tqdm(cumsizes, unit="scales")
         total_mdl = 0.0
-        total_trials = 0
 
-        for n in pbar:
-            num_trials = self.num_trials
-            total_trials += num_trials
+        for n, next_n in pbar:
+            # Shuffle data
+            indices = torch.randperm(len(x), device=self.device, generator=rng)
+            x, y = x[indices], y[indices]
 
-            # Create new optimizer and forward function for this chunk size
+            nonval_x, val_x = x.split([nonval_size, val_size])
+            nonval_y, val_y = y.split([nonval_size, val_size])
+
+            train_size, test_size = nonval_size - parts[-1], parts[-1]
+            train_x, test_x = nonval_x.split([train_size, test_size])
+            train_y, test_y = nonval_y.split([train_size, test_size])
+
             probe = self.probe_cls(
                 num_features=self.num_features,
                 num_classes=self.num_classes,
@@ -153,69 +119,24 @@ class Sweep:
                 dtype=self.dtype,
                 **self.probe_kwargs,
             )
-            opt = self.optimizer_cls(probe.parameters(), **self.optimizer_kwargs)
-
-            best_loss = torch.inf
-            best_state = probe.state_dict()
-            schedule = optim.lr_scheduler.ReduceLROnPlateau(
-                opt,
-                factor=0.5,
-                patience=0,
-                threshold=0.01,
+            probe.fit(
+                train_x[:n],
+                train_y[:n],
+                x_val=val_x,
+                y_val=val_y,
+                verbose=False,
+                transform=transform,
+                **fit_kwargs,
             )
 
-            # Train until we don't improve for four epochs
-            # TODO: Perform early stopping and learning rate annealing separately
-            # for each trial?
-            while opt.param_groups[0]["lr"] > opt.defaults["lr"] * 0.5**4:
-                # Single epoch on the training set
-                for x_batch, y_batch in zip(
-                    train_x[:n].split(self.batch_size),
-                    train_y[:n].split(self.batch_size),
-                ):
-                    opt.zero_grad()
+            # Compute test loss and add to scaling curve
+            test_loss = probe.evaluate(
+                transform(test_x, test_y), test_y, self.batch_size
+            )
+            curve.append(float(test_loss))
+            pbar.set_postfix(loss=f"{test_loss:.4f}")
 
-                    # We just sum the loss across different trials since they don't
-                    # affect one another
-                    loss = loss_fn(probe(x_batch), y_batch)
-                    loss.backward()
-                    opt.step()
+            # Update MDL estimate
+            total_mdl += next_n * test_loss
 
-                # Evaluate on the validation set
-                with torch.no_grad():
-                    # Update learning rate schedule
-                    val_loss = 0.0
-
-                    for x_batch, y_batch in zip(
-                        val_x.split(self.batch_size), val_y.split(self.batch_size)
-                    ):
-                        loss = loss_fn(probe(x_batch), y_batch, reduction="sum")
-                        val_loss += float(loss) / math.log(2)  # Average over trials
-
-                    val_loss /= val_size
-                    schedule.step(val_loss)
-
-                if val_loss < best_loss:
-                    best_loss = val_loss
-                    best_state = deepcopy(probe.state_dict())
-
-            # Evaluate on the next chunk
-            with torch.no_grad():
-                probe.load_state_dict(best_state)
-                test_loss = 0.0
-
-                for x_batch, y_batch in zip(
-                    test_x.split(self.batch_size), test_y.split(self.batch_size)
-                ):
-                    loss = loss_fn(probe(x_batch), y_batch, reduction="sum")
-                    test_loss += float(loss) / math.log(2)  # Average over trials
-
-                test_loss /= test_size
-
-                curve.append(float(test_loss))
-                pbar.set_postfix(loss=f"{test_loss:.4f}")
-
-                # Update MDL estimate
-                total_mdl += n * test_loss
-
-        return MdlResult(total_mdl / len(test_x), curve, cumsizes, total_trials)
+        return MdlResult(total_mdl / nonval_size, curve, cumsizes, 0)
