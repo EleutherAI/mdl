@@ -8,12 +8,13 @@ from .probe import Probe
 
 
 class MlpProbe(Probe):
-    """Multi-layer perceptron probe with GELU activation."""
+    """Multi-layer perceptron with ResNet architecture."""
 
     def __init__(
         self,
         num_features: int,
         num_classes: int = 2,
+        hidden_size: int | None = None,
         device: str | torch.device | None = None,
         dtype: torch.dtype | None = None,
         *,
@@ -22,28 +23,37 @@ class MlpProbe(Probe):
         super().__init__(num_features, num_classes, device, dtype)
         self.num_layers = num_layers
 
-        # Same expansion ratio as Vaswani et al. (2017)
-        hidden_dim = (
-            4 * num_features if num_layers == 2 else round(num_features * 4 / 3)
-        )
-        output_dim = num_classes if num_classes > 2 else 1
-        sizes = [num_features] + [hidden_dim] * (num_layers - 1) + [output_dim]
-
-        self.net = nn.Sequential()
-        for in_dim, out_dim in pairwise(sizes):
-            self.net.append(
-                nn.Linear(in_dim, out_dim, device=device, dtype=dtype),
+        if hidden_size is None:
+            hidden_size = (
+                4 * num_features if num_layers == 2 else round(num_features * 4 / 3)
             )
-            self.net.append(nn.GELU())
 
-        self.net.pop(-1)  # Remove last activation
+        output_dim = num_classes if num_classes > 2 else 1
+        sizes = [num_features] + [hidden_size] * (num_layers - 1)
+
+        self.trunk = nn.Sequential(
+            *[
+                MlpBlock(in_dim, out_dim, device=device, dtype=dtype)
+                for in_dim, out_dim in pairwise(sizes)
+            ]
+        )
+
+        self.fc = nn.Linear(hidden_size, output_dim, device=device, dtype=dtype)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        # ResNet initialization
+        for m in self.trunk.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.net(x).squeeze(-1)
+        features = self.trunk(x)
+        return self.fc(features).squeeze(-1)
 
     def build_optimizer(self) -> optim.Optimizer:
         if self.num_layers > 1:
-            return optim.AdamW(self.parameters(), lr=1e-4)
+            return optim.AdamW(self.parameters())
         else:
             # Use Nesterov SGD for linear probes. The problem is convex and there's
             # really no need to use an adaptive learning rate. We can set the fixed
@@ -59,6 +69,43 @@ class MlpProbe(Probe):
                 # Use same weight decay as AdamW above
                 weight_decay=0.01,
             )
+
+
+class MlpBlock(nn.Module):
+    def __init__(self, in_features: int, out_features: int, device=None, dtype=None):
+        super().__init__()
+
+        self.linear1 = nn.Linear(
+            in_features, out_features, bias=False, device=device, dtype=dtype
+        )
+        self.linear2 = nn.Linear(
+            out_features, out_features, bias=False, device=device, dtype=dtype
+        )
+        self.bn1 = nn.BatchNorm1d(out_features, device=device, dtype=dtype)
+        self.bn2 = nn.BatchNorm1d(out_features, device=device, dtype=dtype)
+        self.downsample = (
+            nn.Linear(in_features, out_features, bias=False, device=device, dtype=dtype)
+            if in_features != out_features
+            else None
+        )
+
+    def forward(self, x):
+        identity = x
+
+        out = self.linear1(x)
+        out = self.bn1(out)
+        out = nn.functional.relu(out)
+
+        out = self.linear2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(identity)
+
+        out += identity
+        out = nn.functional.relu(out)
+
+        return out
 
 
 # Convenience alias

@@ -25,9 +25,6 @@ class Probe(nn.Module, ABC):
         self.num_classes = num_classes
         self.num_features = num_features
 
-    def augment_data(self, x: Tensor) -> Tensor:
-        return x
-
     @abstractmethod
     def build_optimizer(self) -> optim.Optimizer:
         ...
@@ -38,13 +35,15 @@ class Probe(nn.Module, ABC):
         x: Tensor,
         y: Tensor,
         *,
+        augment: Callable[[Tensor], Tensor] = lambda x: x,
         batch_size: int = 128,
         early_stop_epochs: int = 4,
         max_epochs: int = 50,
-        preprocessor: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
-        seed: int = 42,
-        verbose: bool = False,
+        reduce_lr_on_plateau: bool = True,
         return_validation_losses: bool = False,
+        seed: int = 42,
+        transform: Callable[[Tensor, Tensor], Tensor] = lambda x, _: x,
+        verbose: bool = False,
         x_val: Tensor | None = None,
         y_val: Tensor | None = None,
     ):
@@ -91,6 +90,11 @@ class Probe(nn.Module, ABC):
         )
 
         opt = self.build_optimizer()
+        schedule = (
+            optim.lr_scheduler.LambdaLR(opt, lambda _: 1.0)
+            if reduce_lr_on_plateau
+            else optim.lr_scheduler.CosineAnnealingLR(opt, max_epochs)
+        )
         pbar = trange(max_epochs, desc="Epoch", disable=not verbose)
 
         best_loss = torch.inf
@@ -99,8 +103,7 @@ class Probe(nn.Module, ABC):
         num_plateaus = 0
 
         self.eval()
-        x_val = self.augment_data(x_val)
-        x_val = preprocessor(x_val, y_val)
+        x_val = transform(x_val, y_val)
 
         for _ in pbar:
             val_loss = self.evaluate(x_val, y_val, batch_size)
@@ -122,7 +125,8 @@ class Probe(nn.Module, ABC):
                 self.load_state_dict(best_state)
 
                 # Manual ReduceLROnPlateau
-                opt.param_groups[0]["lr"] *= 0.5
+                if reduce_lr_on_plateau:
+                    opt.param_groups[0]["lr"] *= 0.5
 
             val_losses.append(best_loss)
             pbar.set_postfix(loss=best_loss)
@@ -134,17 +138,28 @@ class Probe(nn.Module, ABC):
             ):
                 opt.zero_grad()
 
-                x_batch = self.augment_data(x_batch)
-                x_batch = preprocessor(x_batch, y_batch)
+                x_batch = transform(augment(x_batch), y_batch)
                 loss = self.loss(x_batch, y_batch)
                 loss.backward()
                 opt.step()
+
+            # Update learning rate
+            schedule.step()
 
         # Load parameters with lowest validation loss
         self.load_state_dict(best_state)
 
         if return_validation_losses:
             return val_losses
+
+    @torch.no_grad()
+    def accuracy(self, x: Tensor, y: Tensor, batch_size: int) -> float:
+        """Compute average accuracy on `(x, y)` in batches of size `batch_size`."""
+        total_correct = sum(
+            self(x_batch).argmax(dim=-1).eq(y_batch).sum().item()
+            for x_batch, y_batch in zip(x.split(batch_size), y.split(batch_size))
+        )
+        return total_correct / len(x)
 
     @torch.no_grad()
     def evaluate(self, x: Tensor, y: Tensor, batch_size: int) -> float:
