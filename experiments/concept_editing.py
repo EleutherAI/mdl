@@ -6,6 +6,7 @@ from typing import Callable, Literal
 
 import numpy as np
 import torch
+import torchvision as tv
 from concept_erasure import QuadraticFitter
 from sklearn.metrics import accuracy_score
 from torchvision.datasets import CIFAR10
@@ -15,6 +16,7 @@ from mdl import MlpProbe, QuadraticProbe, VisionProbe
 from mdl.probe import Probe
 
 NUM_CLASSES = 10
+IMAGE_SIZE = 32
 
 
 def fit_linear_editor(X: torch.Tensor, Z: torch.Tensor, num_classes: int):
@@ -98,14 +100,14 @@ def train_model(
         model = cls(
             num_classes=NUM_CLASSES,
             device=X_train.device,
-            dtype=torch.float16,  # TODO:
+            dtype=torch.float32,
         )
     else:
         model = cls(
             X_train.shape[1],
             num_classes=NUM_CLASSES,
             device=X_train.device,
-            dtype=torch.float16,
+            dtype=torch.float32,
         )
     model.fit(
         X_train,
@@ -226,6 +228,15 @@ def evaluate_model(
 
 
 def main(args):
+    padding = round(IMAGE_SIZE * 0.125)
+
+    augmentor = tv.transforms.Compose(
+        [
+            tv.transforms.RandomCrop(IMAGE_SIZE, padding=padding),
+            tv.transforms.RandomHorizontalFlip(),
+        ]
+    )
+
     results = []
     seeds = [0, 1, 2, 3, 4]
     for seed in seeds:
@@ -235,9 +246,8 @@ def main(args):
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
         model_configs = [
-            (MlpProbe, dict(num_layers=2)),
-            (MlpProbe, dict(num_layers=6)),
-            (VisionProbe, dict()),
+            (MlpProbe, dict(num_layers=3)),
+            (VisionProbe, dict(augmentor=augmentor)),
             (QuadraticProbe, dict()),
         ]
         editing_modes = ["quadratic", "linear"]

@@ -9,6 +9,9 @@ from torch import Tensor, nn, optim
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_loss,
 )
+from torch.nn.functional import (
+    cross_entropy,
+)
 from tqdm.auto import trange
 
 
@@ -185,7 +188,7 @@ class Probe(nn.Module, ABC):
     def loss_fn(self, logits: Tensor, target: Tensor, smoothing: float = 0) -> Tensor:
         """Computes the loss of the predictions on the given data."""
         return (
-            cross_entropy_with_label_smoothing(logits, target, smoothing) / math.log(2)
+            cross_entropy(logits, target.long())
             if logits.ndim == 2
             else bce_loss(logits, target)
         ) / math.log(2)
