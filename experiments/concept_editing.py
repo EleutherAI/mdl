@@ -67,7 +67,7 @@ def get_train_test_data(
     X_test, Y_test = prepare_data(
         test_data, size=test_size, flatten=flatten, device=device
     )
-    print("Train size:", len(X_train))
+    print("Train+val size:", len(X_train))
     print("Test size:", len(X_test))
     return X_train, X_test, Y_train, Y_test
 
@@ -170,6 +170,8 @@ def evaluate_model(
         else:
             return float(accuracy_score(y.cpu(), logits.argmax(dim=1).cpu()))
 
+    X_test_original = X_test.clone()
+    Y_test_original = Y_test.clone()
     device = X_test.device
     # 9x the data by making a copy of each row and editing the
     # concept to be each of the 9 other classes
@@ -190,9 +192,10 @@ def evaluate_model(
     )
     Y_test = Y_test.to(device)
     logits = get_logits(X_test)
+    logits_without_edit = get_logits(X_test_original)
     results = dict()
     for metric in ["loss", "top1"]:
-        results[metric] = eval_metric(logits, Y_test, metric)
+        results[metric] = eval_metric(logits_without_edit, Y_test_original, metric)
 
         for eval_against in ["source", "target"]:
             Y_eval = Y_test if eval_against == "source" else Y_target
@@ -242,9 +245,15 @@ def main(args):
                 device=args.device,
             )
             model = train_model(cls, X_train, Y_train)
+
             for editing_mode in editing_modes:
                 print(f"Evaluating {cls.__name__} with {editing_mode} editor...")
-                editor = get_editor(editing_mode, X_train, Y_train)
+
+                if cls == VisionProbe and args.augment_before_edit:
+                    X_train_for_edit = model.augment_data(X_train)
+                else:
+                    X_train_for_edit = X_train
+                editor = get_editor(editing_mode, X_train_for_edit, Y_train)
                 with torch.no_grad():
                     eval_result = evaluate_model(model, X_test, Y_test, editor)
                 results.append(
@@ -272,7 +281,7 @@ if __name__ == "__main__":
     parser.add_argument("--train-size", type=int, default=None)
     parser.add_argument("--test-size", type=int, default=None)
     parser.add_argument("--out-dir", type=str, default=".")  # "../data/"
-    parser.add_argument("--augment-before-edit")
+    parser.add_argument("--augment-before-edit", action="store_true", default=True)
 
     args = parser.parse_args()
     main(args)

@@ -124,6 +124,7 @@ class Sweep:
                 x_val=val_x,
                 y_val=val_y,
                 verbose=False,
+                max_epochs=1000,
                 preprocessor=preprocessor,
             )
 

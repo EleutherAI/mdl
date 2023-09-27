@@ -43,7 +43,7 @@ class MlpProbe(Probe):
 
     def build_optimizer(self) -> optim.Optimizer:
         if self.num_layers > 1:
-            return optim.AdamW(self.parameters(), lr=1e-4)
+            return optim.AdamW(self.parameters(), lr=1e-3)
         else:
             # Use Nesterov SGD for linear probes. The problem is convex and there's
             # really no need to use an adaptive learning rate. We can set the fixed
