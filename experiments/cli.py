@@ -27,7 +27,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     parser = ArgumentParser()
-    parser.add_argument("name", type=str)
+    parser.add_argument("--name", type=str, default='')
     parser.add_argument("--erasers", type=str, nargs="+", choices=["none", "leace", "oleace", "qleace"], default=["none"])
     parser.add_argument("--net", type=str, choices=("mlp", "resmlp", "resnet", "convnext", "vit", "linear"))
     parser.add_argument("--width", type=int, default=128)
@@ -156,7 +156,7 @@ if __name__ == "__main__":
                 run = wandb.init(
                     project="mdl", 
                     entity="eleutherai", 
-                    name=f'{eraser_str if eraser_str != "none" else "baseline"} {args.name} seed={seed}', 
+                    name=f'{eraser_str if eraser_str != "none" else "baseline"} {args.name} w={args.width} d={args.depth } s={seed} n={args.net}', 
                     config={'eraser': eraser_str, **vars(args)}
                 )
             else:
