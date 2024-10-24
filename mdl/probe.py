@@ -164,10 +164,10 @@ class Probe(nn.Module, ABC):
             # Update learning rate
             schedule.step()
 
-            # Calculate norm of parameters' mean differences from initialization
-            w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius = self.calculate_weight_change_norms(initial_weights)
-
             if logger is not None:
+                # Calculate norm of parameters' mean differences from initialization
+                w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius = self.calculate_weight_change_norms(initial_weights)
+
                 logger.log({
                     "epoch": ep,
                     "train/loss": sum(train_losses) / len(train_losses),
@@ -224,24 +224,21 @@ class Probe(nn.Module, ABC):
         num_biases = len([bias for bias in current_weights if 'bias' in bias])
         assert num_weights > 0, "No weights found in model"
 
-        w_frobenius_norm = 0.0
-        w_spectral_norm = 0.0
+        w_frobenius_norm = 0.
+        w_spectral_norm = 0.
         b_l1 = 0.
         b_frobenius = 0.
 
         for name, current_param in current_weights.items():
-            if 'weight' in name:
-                weight_diff = current_param - initial_weights[name]
+            if 'weight' in name and len(current_param.shape) >= 2:
+                weight_diff = current_param - initial_weights[name]                    
                 if len(weight_diff.shape) > 2:
-                    print("more than 2 dims")
-                    weight_diff_2d = weight_diff.reshape(weight_diff.shape[0], -1)
-                else:
-                    weight_diff_2d = weight_diff
+                    weight_diff = weight_diff.reshape(weight_diff.shape[0], -1)
                     
-                w_frobenius_norm += torch.norm(weight_diff_2d, p='fro') / num_weights
+                w_frobenius_norm += torch.norm(weight_diff, p='fro') / num_weights
 
                 # Calculate only the largest singular value
-                U, S, Vh = torch.svd_lowrank(weight_diff_2d, q=1)
+                U, S, Vh = torch.svd_lowrank(weight_diff, q=1)
                 w_spectral_norm += S[0].item() / num_weights
             
             if 'bias' in name:

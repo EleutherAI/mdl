@@ -74,32 +74,14 @@ class VisionProbe(Probe):
         return self.net(self.norm(x))
 
 
-class ResNetProbe(VisionProbe):
-    # init vision prob with resnet18
-    def __init__(
-        self,
-        num_classes: int = 2,
-        learning_rate: float = 0.005,
-        momentum: float = 0.9,
-        weight_decay: float = 5e-4,
-        device: str | torch.device | None = None,
-        dtype: torch.dtype | None = None,
-        num_features: int = 3,  # Unused
-        pretrained: bool = False,
-    ):
-        super().__init__(
-            num_classes, learning_rate, 
-            momentum, weight_decay, "resnet18", device, 
-            dtype, num_features, pretrained
-        )
-
-
 class ViTProbe(Probe):
     def __init__(
             self, 
             # Unused
             num_features: int, 
+            hidden_size: int,
             num_classes: int = 2, 
+            num_layers: int = 2,
             device: str | torch.device | None = None, 
             dtype: torch.dtype | None = None
     ):
@@ -110,16 +92,16 @@ class ViTProbe(Probe):
             num_channels=3,
             patch_size=1,
             num_labels=num_classes,
-            hidden_size=32,
-            num_hidden_layers=3,
+            hidden_size=hidden_size,
+            num_hidden_layers=num_layers,
             num_attention_heads=4,
-            intermediate_size=128,
+            intermediate_size=256,
             hidden_act="gelu",
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
             initializer_range=0.02,
         )
-        self.net = ViTForImageClassification(cfg)
+        self.net = ViTForImageClassification(cfg).to(device)
 
     def build_optimizer(self):
         return torch.optim.SGD(
@@ -127,7 +109,7 @@ class ViTProbe(Probe):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        # x = x.view(-1, 3, 32, 32)
+        x = x.view(-1, 3, 32, 32)
         return self.net(x).logits
 
 
@@ -137,12 +119,18 @@ class ConvNextProbe(Probe):
             # Unused
             num_features: int, 
             num_classes: int = 2, 
+            num_layers: int = 2,
+            hidden_size: int = 2,
             device: str | torch.device | None = None, 
             dtype: torch.dtype | None = None
         ):
+        super().__init__(num_features, num_classes, device, dtype)
+        
         depths = [2, 2, 6, 2]
-        hidden_sizes = [40, 80, 160, 320]
 
+        # Double hidden size at each additional layer
+        hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, num_layers)]
+        
         cfg = ConvNextV2Config(
                 image_size=32,
                 num_channels=3,
@@ -154,7 +142,7 @@ class ConvNextProbe(Probe):
                 # low-resolution images like CIFAR-10
                 patch_size=1,
             )
-        self.net = ConvNextV2ForImageClassification(cfg)
+        self.net = ConvNextV2ForImageClassification(cfg).to(device)
     
     def build_optimizer(self):
         return torch.optim.SGD(

@@ -2,7 +2,7 @@ from .math import partition_logspace
 from .mlp_probe import LinearProbe, ResMlpProbe
 from .quadratic_probe import QuadraticProbe
 from .sweep import Sweep
-from .vision_probe import ResNetProbe
+from .resnet_probe import ResNetProbe
 
 __all__ = [
     "partition_logspace",

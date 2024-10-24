@@ -15,7 +15,8 @@ from torchvision.transforms.functional import to_tensor
 
 from mdl.mlp_probe import ResMlpProbe, SeqMlpProbe, LinearProbe
 from mdl.sweep import MdlResult, Sweep
-from mdl.vision_probe import ViTProbe, ConvNextProbe, ResNetProbe
+from mdl.vision_probe import ViTProbe, ConvNextProbe
+from mdl.resnet_probe import ResNetProbe
 
 lt.monkey_patch()
 
@@ -121,10 +122,10 @@ if __name__ == "__main__":
     # TODO ensure class hyperparameter setting works
     # TODO pass in a transform that moves batch to device if we need more epochs 
     sweep = Sweep(
-        X.shape[1], k, device=X.device, dtype=torch.float64, # from bfloat16
+        X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64, # from bfloat16
         num_chunks=10,
         probe_cls=model_cls,
-        probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width), # , num_classes=k
+        probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width),
     )
 
 
@@ -142,7 +143,7 @@ if __name__ == "__main__":
 
     def none_transform(x, y):
         if args.net == "resnet":
-            return x, y
+            return x
         return x.flatten(1)
 
     data = {}
@@ -152,7 +153,12 @@ if __name__ == "__main__":
         results = []
         for seed in range(num_seeds):
             if not 'test' in args.name:
-                run = wandb.init(project="mdl", entity="eleutherai", name=f'{eraser_str} {args.name} seed={seed}', config={'eraser': eraser_str, **vars(args)})
+                run = wandb.init(
+                    project="mdl", 
+                    entity="eleutherai", 
+                    name=f'{eraser_str if eraser_str != "none" else "baseline"} {args.name} seed={seed}', 
+                    config={'eraser': eraser_str, **vars(args)}
+                )
             else:
                 run = None
             results.append(sweep.run(
