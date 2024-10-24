@@ -114,6 +114,9 @@ class Probe(nn.Module, ABC):
         self.eval()
         x_val = transform(x_val, y_val)
 
+        # Record initial weights for weight change norm logging
+        initial_weights = deepcopy(self.state_dict()) if logger is not None else None
+
         for ep in pbar:
             val_loss = self.evaluate(x_val, y_val, batch_size)
             val_acc = self.accuracy(x_val, y_val, batch_size)
@@ -161,6 +164,9 @@ class Probe(nn.Module, ABC):
             # Update learning rate
             schedule.step()
 
+            # Calculate norm of parameters' mean differences from initialization
+            w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius = self.calculate_weight_change_norms(initial_weights)
+
             if logger is not None:
                 logger.log({
                     "epoch": ep,
@@ -168,6 +174,10 @@ class Probe(nn.Module, ABC):
                     "val/loss": val_loss,
                     "val/accuracy": val_acc,
                     "learning_rate": opt.param_groups[0]["lr"],
+                    "weight_frobenius_norm": w_frobenius_norm,
+                    "weight_spectral_norm": w_spectral_norm,
+                    "bias_l1_norm": b_l1,
+                    "bias_frobenius_norm": b_frobenius
                 })
 
         # Load parameters with lowest validation loss
@@ -205,3 +215,38 @@ class Probe(nn.Module, ABC):
     def loss(self, x: Tensor, y: Tensor, smoothing: float = 0.1) -> Tensor:
         """Computes the loss of the probe on the given data."""
         return self.loss_fn(self(x.to(self.dtype)).squeeze(-1), y, smoothing)
+
+    def calculate_weight_change_norms(self, initial_weights):
+        """Calculate Frobenius and spectral norms of weight changes for logging."""
+        current_weights = self.state_dict()
+        
+        num_weights = len([weight for weight in current_weights if 'weight' in weight])
+        num_biases = len([bias for bias in current_weights if 'bias' in bias])
+        assert num_weights > 0, "No weights found in model"
+
+        w_frobenius_norm = 0.0
+        w_spectral_norm = 0.0
+        b_l1 = 0.
+        b_frobenius = 0.
+
+        for name, current_param in current_weights.items():
+            if 'weight' in name:
+                weight_diff = current_param - initial_weights[name]
+                if len(weight_diff.shape) > 2:
+                    print("more than 2 dims")
+                    weight_diff_2d = weight_diff.reshape(weight_diff.shape[0], -1)
+                else:
+                    weight_diff_2d = weight_diff
+                    
+                w_frobenius_norm += torch.norm(weight_diff_2d, p='fro') / num_weights
+
+                # Calculate only the largest singular value
+                U, S, Vh = torch.svd_lowrank(weight_diff_2d, q=1)
+                w_spectral_norm += S[0].item() / num_weights
+            
+            if 'bias' in name:
+                bias_diff = current_param - initial_weights[name]
+                b_l1 += torch.norm(bias_diff, p=1) / num_biases
+                b_frobenius += torch.norm(bias_diff, p=2) / num_biases
+
+        return w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius

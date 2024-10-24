@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 import lovely_tensors as lt
 from torchvision.transforms.functional import to_tensor
 
-from mdl.mlp_probe import ResMlpProbe, SeqMlpProbe
+from mdl.mlp_probe import ResMlpProbe, SeqMlpProbe, LinearProbe
 from mdl.sweep import MdlResult, Sweep
 from mdl.vision_probe import ViTProbe, ConvNextProbe, ResNetProbe
 
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("name", type=str)
     parser.add_argument("--erasers", type=str, nargs="+", choices=["none", "leace", "oleace", "qleace"], default=["none"])
-    parser.add_argument("--net", type=str, choices=("mlp", "resmlp", "resnet", "convnext", "vit"))
+    parser.add_argument("--net", type=str, choices=("mlp", "resmlp", "resnet", "convnext", "vit", "linear"))
     parser.add_argument("--width", type=int, default=128)
     parser.add_argument("--depth", type=int, default=3)
     parser.add_argument("--debug", action="store_true")
@@ -98,10 +98,11 @@ if __name__ == "__main__":
         "resnet": ResNetProbe,
         "vit": ViTProbe,
         "convnext": ConvNextProbe,
+        "linear": LinearProbe,
     }[args.net]
 
     num_epochs = 1
-    num_seeds = 3
+    num_seeds = 1
 
     def reshape(x):
         "reshape tensor to CxHxW"
@@ -118,6 +119,7 @@ if __name__ == "__main__":
         ]
     )
     # TODO ensure class hyperparameter setting works
+    # TODO pass in a transform that moves batch to device if we need more epochs 
     sweep = Sweep(
         X.shape[1], k, device=X.device, dtype=torch.float64, # from bfloat16
         num_chunks=10,
@@ -125,22 +127,18 @@ if __name__ == "__main__":
         probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width), # , num_classes=k
     )
 
-    # TODO add other erasers
-    # TODO check transforms in order for correct erasers
-    # TODO pass in a transform that moves batch to device? 
-    # TODO ensure precision=64
-    def erase(x: Tensor, y: Tensor, eraser):
-        # if y.ndim == 0:
-        #     y = y.unsqueeze(0)
-        assert y.ndim == 1
 
+    def erase(x: Tensor, y: Tensor, eraser):
+        assert y.ndim == 1
+        assert x.ndim > 1 # otherwise requires unsqueeze
+
+        # TODO figure out why this works without .flatten(1) now?
         if isinstance(eraser, LeaceEraser):
-            return eraser(x.flatten()).reshape(x.shape)
+            return eraser(x).reshape(x.shape)
         elif isinstance(eraser, OracleEraser):
-            return eraser(x.flatten(), y).reshape(x.shape)
+            return eraser(x, y).reshape(x.shape)
         else:
             return eraser(x, y)
-            # x = eraser(x.unsqueeze(0), y)
 
     def none_transform(x, y):
         if args.net == "resnet":
@@ -149,12 +147,12 @@ if __name__ == "__main__":
 
     data = {}
     for eraser_str in args.erasers:
-        transform = partial(erase, eraser=state[eraser_str]) if eraser_str != "none" else none_transform
+        transform = partial(erase, eraser=state[eraser_str].to(device)) if eraser_str != "none" else none_transform
 
         results = []
         for seed in range(num_seeds):
             if not 'test' in args.name:
-                run = wandb.init(project="mdl", entity="eleutherai", name=f'{args.name}_{eraser_str}', config={'eraser': eraser_str, **vars(args)})
+                run = wandb.init(project="mdl", entity="eleutherai", name=f'{eraser_str} {args.name} seed={seed}', config={'eraser': eraser_str, **vars(args)})
             else:
                 run = None
             results.append(sweep.run(

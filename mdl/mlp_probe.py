@@ -43,13 +43,13 @@ class SeqMlpProbe(Probe):
         #     ],
         #     torch.nn.Linear(h, k),
         # )
-    def build_optimizer(self) -> optim.Optimizer:
-        return optim.SGD(
-            self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
-        )
+
+    def build_optimizer(self):
+        return torch.optim.AdamW(self.parameters())
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net(x)
+
 
 class ResMlpProbe(Probe):
     """Multi-layer perceptron with ResNet architecture."""
