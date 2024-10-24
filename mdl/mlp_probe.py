@@ -7,7 +7,51 @@ from torch import Tensor, nn, optim
 from .probe import Probe
 
 
-class MlpProbe(Probe):
+class SeqMlpProbe(Probe):
+    def __init__(
+        self,
+        # Unused
+        num_features: int,
+        num_classes: int = 2,
+        hidden_size: int | None = None,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        *,
+        num_layers: int = 2,
+    ):
+        super().__init__(num_features, num_classes, device, dtype)
+
+        assert hidden_size is not None
+
+        k, h = num_classes, hidden_size
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(32 * 32 * 3, h, device=device, dtype=dtype),
+            torch.nn.ReLU(),
+            torch.nn.Linear(h, h, device=device, dtype=dtype),
+            torch.nn.ReLU(),
+            torch.nn.Linear(h, k, device=device, dtype=dtype),
+        )
+        
+        # TODO incorporate initial image size
+        # self.net = torch.nn.Sequential(
+        #     *[
+        #         torch.nn.Sequential(
+        #             torch.nn.Linear(h, h),
+        #             torch.nn.ReLU(),
+        #         )
+        #         for _ in range(num_layers)
+        #     ],
+        #     torch.nn.Linear(h, k),
+        # )
+    def build_optimizer(self) -> optim.Optimizer:
+        return optim.SGD(
+            self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.net(x)
+
+class ResMlpProbe(Probe):
     """Multi-layer perceptron with ResNet architecture."""
 
     def __init__(
@@ -39,13 +83,6 @@ class MlpProbe(Probe):
         )
 
         self.fc = nn.Linear(hidden_size, output_dim, device=device, dtype=dtype)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        # ResNet initialization
-        for m in self.trunk.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x: Tensor) -> Tensor:
         features = self.trunk(x)
@@ -53,7 +90,10 @@ class MlpProbe(Probe):
 
     def build_optimizer(self) -> optim.Optimizer:
         if self.num_layers > 1:
-            return optim.AdamW(self.parameters())
+            return torch.optim.SGD(
+                self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
+            )
+            # return optim.AdamW(self.parameters())
         else:
             # Use Nesterov SGD for linear probes. The problem is convex and there's
             # really no need to use an adaptive learning rate. We can set the fixed
@@ -91,7 +131,6 @@ class MlpBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.linear1(x)
         out = self.bn1(out)
         out = nn.functional.relu(out)
@@ -109,4 +148,4 @@ class MlpBlock(nn.Module):
 
 
 # Convenience alias
-LinearProbe = partial(MlpProbe, num_layers=1)
+LinearProbe = partial(ResMlpProbe, num_layers=1)

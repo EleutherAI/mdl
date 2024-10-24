@@ -8,7 +8,7 @@ from torch import Tensor
 from tqdm.auto import tqdm
 
 from .math import partition_logspace
-from .mlp_probe import MlpProbe, Probe
+from .mlp_probe import ResMlpProbe, Probe
 
 
 class PowerLaw(NamedTuple):
@@ -54,7 +54,7 @@ class Sweep:
     batch_size: int = 32
     """Batch size to use for fitting the probes."""
 
-    probe_cls: Type[Probe] = MlpProbe
+    probe_cls: Type[Probe] = ResMlpProbe
     """Probe class to instantiate."""
 
     probe_kwargs: dict[str, Any] = field(default_factory=dict)

@@ -49,6 +49,7 @@ class Probe(nn.Module, ABC):
         verbose: bool = False,
         x_val: Tensor | None = None,
         y_val: Tensor | None = None,
+        logger = None,
     ):
         """Fits the model to the input data using Adam with L2 regularization.
 
@@ -112,10 +113,10 @@ class Probe(nn.Module, ABC):
 
         self.eval()
         x_val = transform(x_val, y_val)
-        x_val = transform(x_val, y_val)
 
         for ep in pbar:
             val_loss = self.evaluate(x_val, y_val, batch_size)
+            val_acc = self.accuracy(x_val, y_val, batch_size)
 
             if val_loss < best_loss:
                 best_loss = val_loss
@@ -144,17 +145,30 @@ class Probe(nn.Module, ABC):
 
             ### TRAIN LOOP ###
             self.train()
+            train_losses = []
+
             for x_batch, y_batch in zip(
                 x_train.split(batch_size), y_train.split(batch_size)
             ):
                 opt.zero_grad()
 
                 x_batch = transform(augment(x_batch), y_batch)
-                self.loss(x_batch, y_batch).backward()
+                loss = self.loss(x_batch, y_batch)
+                train_losses.append(loss.item())
+                loss.backward()
                 opt.step()
 
             # Update learning rate
             schedule.step()
+
+            if logger is not None:
+                logger.log({
+                    "epoch": ep,
+                    "train/loss": sum(train_losses) / len(train_losses),
+                    "val/loss": val_loss,
+                    "val/accuracy": val_acc,
+                    "learning_rate": opt.param_groups[0]["lr"],
+                })
 
         # Load parameters with lowest validation loss
         self.load_state_dict(best_state)
