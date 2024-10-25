@@ -1,5 +1,6 @@
 import torch
 import torchvision as tv
+import math
 from torch import Tensor, nn, optim
 from transformers import ViTConfig, ViTForImageClassification, ConvNextV2Config, ConvNextV2ForImageClassification
 
@@ -95,17 +96,17 @@ class ViTProbe(Probe):
             hidden_size=hidden_size,
             num_hidden_layers=num_layers,
             num_attention_heads=4,
-            intermediate_size=256,
+            intermediate_size=hidden_size * 2, # TODO * 4 if sufficient VRAM
             hidden_act="gelu",
             hidden_dropout_prob=0.1,
             attention_probs_dropout_prob=0.1,
-            initializer_range=0.02,
         )
         self.net = ViTForImageClassification(cfg).to(device)
 
     def build_optimizer(self):
-        return torch.optim.SGD(
-            self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
+        # adam
+        return torch.optim.AdamW(
+            self.parameters(), lr=3e-3, weight_decay=0.3, betas=(0.9, 0.999)
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -124,18 +125,22 @@ class ConvNextProbe(Probe):
             device: str | torch.device | None = None, 
             dtype: torch.dtype | None = None
         ):
+        assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
         
-        depths = [2, 2, 6, 2]
+        # Depth ratio specified in ConvNext paper
+        depths = [1, 1, 3, 1]
+        depths *= num_layers
 
-        # Double hidden size at each additional layer
-        hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, num_layers)]
+        # Double hidden size at each stage
+        hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, 4)]
         
         cfg = ConvNextV2Config(
                 image_size=32,
                 num_channels=3,
                 depths=depths,
-                drop_path_rate=0.1,
+                # drop_path_rate=0.1,
+                num_stages=4,
                 hidden_sizes=hidden_sizes,
                 num_labels=num_classes,
                 # The default of 4 x 4 patches shrinks the image too aggressively for
@@ -143,12 +148,23 @@ class ConvNextProbe(Probe):
                 patch_size=1,
             )
         self.net = ConvNextV2ForImageClassification(cfg).to(device)
+        self.reset_parameters()
     
     def build_optimizer(self):
-        return torch.optim.SGD(
-            self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
+        return torch.optim.AdamW(
+            self.parameters(), lr=1.5e-4, weight_decay=0.05, betas=(0.9, 0.99)
         )
 
     def forward(self, x):
         x = x.reshape(-1, 3, 32, 32)
         return self.net(x).logits
+
+    def reset_parameters(self):
+        for m in self.net.modules():
+            if isinstance(m, (nn.Conv2d, nn.Linear)):
+                nn.init.trunc_normal_(m.weight, std=0.2, a=-0.4, b=0.4)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)

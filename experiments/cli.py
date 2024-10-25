@@ -14,12 +14,11 @@ import lovely_tensors as lt
 from torchvision.transforms.functional import to_tensor
 
 from mdl.mlp_probe import ResMlpProbe, SeqMlpProbe, LinearProbe
-from mdl.sweep import MdlResult, Sweep
+from mdl.sweep import Sweep
 from mdl.vision_probe import ViTProbe, ConvNextProbe
 from mdl.resnet_probe import ResNetProbe
 
 lt.monkey_patch()
-
 torch.set_default_tensor_type(torch.DoubleTensor)
 
 
@@ -103,7 +102,7 @@ if __name__ == "__main__":
     }[args.net]
 
     num_epochs = 1
-    num_seeds = 1
+    num_seeds = 4
 
     def reshape(x):
         "reshape tensor to CxHxW"
@@ -119,8 +118,6 @@ if __name__ == "__main__":
             tv.transforms.Lambda(lambda x: x.flatten(1)),
         ]
     )
-    # TODO ensure class hyperparameter setting works
-    # TODO pass in a transform that moves batch to device if we need more epochs 
     sweep = Sweep(
         X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64, # from bfloat16
         num_chunks=10,
@@ -133,7 +130,6 @@ if __name__ == "__main__":
         assert y.ndim == 1
         assert x.ndim > 1 # otherwise requires unsqueeze
 
-        # TODO figure out why this works without .flatten(1) now?
         if isinstance(eraser, LeaceEraser):
             return eraser(x).reshape(x.shape)
         elif isinstance(eraser, OracleEraser):
@@ -156,7 +152,7 @@ if __name__ == "__main__":
                 run = wandb.init(
                     project="mdl", 
                     entity="eleutherai", 
-                    name=f'{eraser_str if eraser_str != "none" else "baseline"} {args.name} w={args.width} d={args.depth } s={seed} n={args.net}', 
+                    name=f'{eraser_str if eraser_str != "none" else "baseline"} {args.name} w={args.width} d={args.depth} s={seed} {args.net}', 
                     config={'eraser': eraser_str, **vars(args)}
                 )
             else:
@@ -164,6 +160,7 @@ if __name__ == "__main__":
             results.append(sweep.run(
                 # Val and train are split in the sweep
                 # was bfloat16
+                # Uses cosine annealing via reduce_lr_on_plateau=False
                 X.double().repeat(num_epochs, 1, 1, 1).flatten(1), Y.repeat(num_epochs), seed=seed, 
                 transform=transform, augment=flattened_image_augmentor, reduce_lr_on_plateau=False, logger=run
             ))

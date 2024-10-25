@@ -131,7 +131,6 @@ class ResNet(nn.Module):
         x = self.fc(x)
         return x
 
-# TODO make this faster
 class ResNetProbe(Probe):
     """Probe based on a custom ResNet implementation with configurable layers."""
 
@@ -152,8 +151,7 @@ class ResNetProbe(Probe):
         self.net = ResNet(
             num_layers=num_layers,
             num_classes=num_classes,
-            # TODO check hyperparameters
-            num_blocks=2,   
+            num_blocks=2,
             hidden_size=hidden_size,
             device=device,
             dtype=dtype

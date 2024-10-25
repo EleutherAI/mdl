@@ -10,7 +10,6 @@ from .probe import Probe
 class SeqMlpProbe(Probe):
     def __init__(
         self,
-        # Unused
         num_features: int,
         num_classes: int = 2,
         hidden_size: int | None = None,
@@ -25,24 +24,17 @@ class SeqMlpProbe(Probe):
 
         k, h = num_classes, hidden_size
         self.net = torch.nn.Sequential(
-            torch.nn.Linear(32 * 32 * 3, h, device=device, dtype=dtype),
+            torch.nn.Linear(num_features, h, device=device, dtype=dtype),
             torch.nn.ReLU(),
-            torch.nn.Linear(h, h, device=device, dtype=dtype),
-            torch.nn.ReLU(),
+            *[
+                torch.nn.Sequential(
+                    torch.nn.Linear(h, h, device=device, dtype=dtype),
+                    torch.nn.ReLU(),
+                )
+                for _ in range(num_layers - 1)
+            ],
             torch.nn.Linear(h, k, device=device, dtype=dtype),
         )
-        
-        # TODO incorporate initial image size
-        # self.net = torch.nn.Sequential(
-        #     *[
-        #         torch.nn.Sequential(
-        #             torch.nn.Linear(h, h),
-        #             torch.nn.ReLU(),
-        #         )
-        #         for _ in range(num_layers)
-        #     ],
-        #     torch.nn.Linear(h, k),
-        # )
 
     def build_optimizer(self):
         return torch.optim.AdamW(self.parameters())
@@ -73,7 +65,7 @@ class ResMlpProbe(Probe):
             )
 
         output_dim = num_classes if num_classes > 2 else 1
-        sizes = [num_features] + [hidden_size] * (num_layers - 1)
+        sizes = [num_features] + [hidden_size] * (num_layers)
 
         self.trunk = nn.Sequential(
             *[
@@ -82,6 +74,7 @@ class ResMlpProbe(Probe):
             ]
         )
 
+        # breakpoint()
         self.fc = nn.Linear(hidden_size, output_dim, device=device, dtype=dtype)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -109,6 +102,40 @@ class ResMlpProbe(Probe):
                 # Use same weight decay as AdamW above
                 weight_decay=0.01,
             )
+
+
+class LinearProbe(Probe):
+    def __init__(
+        self,
+        num_features: int,
+        num_classes: int = 2,
+        # Unused
+        hidden_size: int | None = None,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        *,
+        # Unused
+        num_layers: int = 2,
+    ):
+        super().__init__(num_features, num_classes, device, dtype)
+
+        self.fc = nn.Linear(num_features, num_classes, device=device, dtype=dtype)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.fc(x).squeeze(-1)
+
+    def build_optimizer(self) -> optim.Optimizer:
+        return optim.SGD(
+            self.parameters(),
+            # Learning rate of 0.1 with momentum 0.9 is "really" an LR of unity in
+            # PyTorch's parametrization; see https://youtu.be/k8fTYJPd3_I
+            lr=0.1,
+            momentum=0.9,
+            # Nesterov seems to be strictly better than regular momentum
+            nesterov=True,
+            # Use same weight decay as AdamW above
+            weight_decay=0.01,
+        )
 
 
 class MlpBlock(nn.Module):
@@ -147,5 +174,4 @@ class MlpBlock(nn.Module):
         return out
 
 
-# Convenience alias
-LinearProbe = partial(ResMlpProbe, num_layers=1)
+
