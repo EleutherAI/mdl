@@ -31,47 +31,48 @@ def run_training(width: int, depth: int, net: str, eraser: str, device: int):
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--net", type=str, default=0)
+    parser.add_argument("--net", type=str, default="convnext")
+    parser.add_argument("--erasers", nargs="+", default=["none", "qleace", "leace"])
     return parser.parse_args()
 
+sweep_params = {
+    'convnext': {
+        # Width specifies the first stage; at each additional stage the width is doubled
+        'widths': [40, 48, 64, 80, 96],
+        'depths': [2, 3, 4]
+    },
+    'resmlp': {
+        'widths': [128, 256, 512, 1024],
+        'depths': [2, 4, 8]
+    },
+    'mlp': {
+        'widths': [128, 256, 512, 1024],
+        'depths': [2, 4, 8]
+    },
+    'vit': {
+        'widths': [128, 256, 512, 1024],
+        'depths': [2, 4, 8]
+    },
+    'resnet': {
+        'widths': [2, 4, 8],
+        'depths': [2, 4, 8, 16]
+    },
+    'linear': {
+        'widths': [0],
+        'depths': [0]
+    },
+}
 def main():
     args = parse_args()
 
-    if args.net == "convnext":
-        for width in [8, 16, 32, 64]:
-            for depth in [2, 4, 8]:
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "convnext", eraser, args.device)
-
-    elif args.net == "resmlp":
-        for width in [128, 256, 512, 1024]:
-            for depth in [2, 4, 8]:
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "resmlp", eraser, args.device)
-
-    if args.net == "mlp":
-        for width in [128, 256, 512, 1024]:
-            for depth in [2, 4, 8]:
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "mlp", eraser, args.device)
-
-    if args.net == "vit":
-        for width in [128, 256, 512, 1024]:
-            for depth in [2, 4, 8]:
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "vit", eraser, args.device)
-
-    if args.net == "linear":
-        for width in [1]: # Unused
-            for depth in [1]: # Unused
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "linear", eraser, args.device)
+    widths = sweep_params[args.net]['widths']
+    depths = sweep_params[args.net]['depths']
     
-    if args.net == "resnet":
-        for width in [2, 4, 8]:
-            for depth in [2, 4, 8]:
-                for eraser in ["none", "qleace", "leace"]:
-                    run_training(width, depth, "resnet", eraser, args.device)
+    for eraser in args.erasers:
+        for width in widths:
+            run_training(width, depths[0], args.net, eraser, args.device)
+        for depth in depths:
+            run_training(widths[0], depth, args.net, eraser, args.device)
 
 if __name__ == "__main__":
     main()

@@ -6,12 +6,14 @@ import wandb
 import torch
 import torch.nn.functional as F
 import torchvision as tv
+import torchvision.transforms.v2 as transforms
+from torchvision.transforms.v2.functional import to_tensor
 from concept_erasure import LeaceFitter, OracleEraser, OracleFitter, QuadraticFitter, LeaceEraser
 from torch import Tensor
 from torchvision.datasets import CIFAR10
 from tqdm.auto import tqdm
 import lovely_tensors as lt
-from torchvision.transforms.functional import to_tensor
+
 
 from mdl.mlp_probe import ResMlpProbe, SeqMlpProbe, LinearProbe
 from mdl.sweep import Sweep
@@ -31,6 +33,7 @@ if __name__ == "__main__":
     parser.add_argument("--net", type=str, choices=("mlp", "resmlp", "resnet", "convnext", "vit", "linear"))
     parser.add_argument("--width", type=int, default=128)
     parser.add_argument("--depth", type=int, default=3)
+    parser.add_argument("--num_seeds", type=int, default=4)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -44,14 +47,10 @@ if __name__ == "__main__":
     perm = torch.randperm(len(X), generator=rng, device=X.device)
     X, Y = X[perm], Y[perm]
 
-    X_vec = X.view(X.shape[0], -1)
     k = int(Y.max()) + 1
 
     # Split train and validation
     val_size = 1024
-
-    X_vec_train = X_vec[:-val_size]
-    X_vec_val = X_vec[-val_size:]
 
     X_train, X_val = X[:-val_size], X[-val_size:]
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
@@ -86,7 +85,7 @@ if __name__ == "__main__":
 
         state[eraser_str] = fitter.eraser
         torch.save(state, state_path)
-    
+
     # Reduce size after eraser computation - cache does not differentiate between train set sizes
     if args.debug:
         X_train = X_train[:10_000]
@@ -101,53 +100,73 @@ if __name__ == "__main__":
         "linear": LinearProbe,
     }[args.net]
 
-    num_epochs = 1
-    num_seeds = 4
-
-    def reshape(x):
-        "reshape tensor to CxHxW"
-        return x.view(-1, X.shape[1], X.shape[2], X.shape[3])
+    flatten = {
+        "mlp": True,
+        "resmlp": True,
+        "resnet": False,
+        "vit": False,
+        "convnext": False,
+        "linear": True
+    }
 
     image_size = X.shape[-1]
     padding = round(image_size * 0.125)
-    flattened_image_augmentor = tv.transforms.Compose(
-        transforms=[
-            tv.transforms.Lambda(reshape),
-            tv.transforms.RandomCrop(image_size, padding=padding),
-            tv.transforms.RandomHorizontalFlip(),
-            tv.transforms.Lambda(lambda x: x.flatten(1)),
-        ]
-    )
+
+    if flatten[args.net]:
+        def reshape(x):
+            "reshape tensor to CxHxW"
+            return x.view(-1, X.shape[1], X.shape[2], X.shape[3])
+
+        augment = transforms.Compose([
+            transforms.Lambda(reshape),
+            transforms.RandomCrop(image_size, padding=padding), 
+            transforms.RandomHorizontalFlip(),
+            transforms.Lambda(lambda x: x.flatten(1))
+        ])
+    else:
+        augment = transforms.Compose([
+            transforms.RandomCrop(image_size, padding=padding), 
+            transforms.RandomHorizontalFlip(),
+        ])
+
     sweep = Sweep(
-        X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64, # from bfloat16
+        X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64,
         num_chunks=10,
         probe_cls=model_cls,
         probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width),
     )
-
 
     def erase(x: Tensor, y: Tensor, eraser):
         assert y.ndim == 1
         assert x.ndim > 1 # otherwise requires unsqueeze
 
         if isinstance(eraser, LeaceEraser):
-            return eraser(x).reshape(x.shape)
+            x_erased = eraser(x.flatten(1))
         elif isinstance(eraser, OracleEraser):
-            return eraser(x, y).reshape(x.shape)
+            x_erased = eraser(x.flatten(1), y)
         else:
-            return eraser(x, y)
+            x_erased = eraser(x.flatten(1), y)
+
+        if flatten[args.net]:
+            return x_erased 
+        return x_erased.reshape_as(x)
+        
 
     def none_transform(x, y):
-        if args.net == "resnet":
+        if not flatten[args.net]:
             return x
         return x.flatten(1)
 
     data = {}
     for eraser_str in args.erasers:
-        transform = partial(erase, eraser=state[eraser_str].to(device)) if eraser_str != "none" else none_transform
+        transform = (
+            partial(erase, eraser=state[eraser_str].to(device)) 
+            if eraser_str != "none" 
+            else none_transform
+        )
 
         results = []
-        for seed in range(num_seeds):
+        for seed in range(args.num_seeds):
             if not 'test' in args.name:
                 run = wandb.init(
                     project="mdl", 
@@ -157,19 +176,18 @@ if __name__ == "__main__":
                 )
             else:
                 run = None
+
             results.append(sweep.run(
-                # Val and train are split in the sweep
-                # was bfloat16
-                # Uses cosine annealing via reduce_lr_on_plateau=False
-                X.double().repeat(num_epochs, 1, 1, 1).flatten(1), Y.repeat(num_epochs), seed=seed, 
-                transform=transform, augment=flattened_image_augmentor, reduce_lr_on_plateau=False, logger=run
+                X.double(), Y, seed=seed, transform=transform, 
+                augment=augment, reduce_lr_on_plateau=False, logger=run,
             ))
+            
             if not 'test' in args.name:
                 wandb.finish()
 
         data[eraser_str] = results
 
-    data_path = Path("/mnt/ssd-1/lucia/results")
+    data_path = Path(f"/mnt/ssd-1/lucia/results" if not args.debug else f"/mnt/ssd-1/lucia/debug-results")
     data_path.mkdir(exist_ok=True)
     
-    torch.save(data, data_path / f"{args.net}_h={args.width}_d={args.depth}_{args.name}.pth")
+    torch.save(data, data_path / f"{args.net}_h={args.width}_d={args.depth}_{'_'.join(args.erasers)}_{args.name}.pth")

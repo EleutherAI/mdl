@@ -190,6 +190,5 @@ class ResNetProbe(Probe):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x.view(-1, 3, 32, 32)
         x = (x - self.mean_device) / self.std_device
         return self.net(x)

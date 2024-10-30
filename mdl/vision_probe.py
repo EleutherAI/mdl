@@ -104,20 +104,17 @@ class ViTProbe(Probe):
         self.net = ViTForImageClassification(cfg).to(device)
 
     def build_optimizer(self):
-        # adam
         return torch.optim.AdamW(
             self.parameters(), lr=3e-3, weight_decay=0.3, betas=(0.9, 0.999)
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x.view(-1, 3, 32, 32)
         return self.net(x).logits
 
 
 class ConvNextProbe(Probe):
     def __init__(
             self,
-            # Unused
             num_features: int, 
             num_classes: int = 2, 
             num_layers: int = 2,
@@ -128,18 +125,16 @@ class ConvNextProbe(Probe):
         assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
         
-        # Depth ratio specified in ConvNext paper
         depths = [1, 1, 3, 1]
         depths *= num_layers
 
-        # Double hidden size at each stage
         hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, 4)]
         
         cfg = ConvNextV2Config(
                 image_size=32,
                 num_channels=3,
                 depths=depths,
-                # drop_path_rate=0.1,
+                drop_path_rate=0.1,
                 num_stages=4,
                 hidden_sizes=hidden_sizes,
                 num_labels=num_classes,
@@ -147,24 +142,11 @@ class ConvNextProbe(Probe):
                 # low-resolution images like CIFAR-10
                 patch_size=1,
             )
+
         self.net = ConvNextV2ForImageClassification(cfg).to(device)
-        self.reset_parameters()
     
     def build_optimizer(self):
-        return torch.optim.AdamW(
-            self.parameters(), lr=1.5e-4, weight_decay=0.05, betas=(0.9, 0.99)
-        )
+        return torch.optim.AdamW(self.parameters())
 
     def forward(self, x):
-        x = x.reshape(-1, 3, 32, 32)
         return self.net(x).logits
-
-    def reset_parameters(self):
-        for m in self.net.modules():
-            if isinstance(m, (nn.Conv2d, nn.Linear)):
-                nn.init.trunc_normal_(m.weight, std=0.2, a=-0.4, b=0.4)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
