@@ -1,6 +1,6 @@
 import subprocess
 from argparse import ArgumentParser
-
+from pathlib import Path
 
 def run_training(width: int, depth: int, net: str, eraser: str, device: int):
     cmd = [
@@ -46,8 +46,8 @@ sweep_params = {
         'depths': [2, 4, 8]
     },
     'mlp': {
-        'widths': [128, 256, 512, 1024],
-        'depths': [2, 4, 8]
+        'widths': [64, 128, 256, 512, 1024, 2048, 4096, 8192],
+        'depths': [2, 4, 8, 16]
     },
     'vit': {
         'widths': [128, 256, 512, 1024],
@@ -62,6 +62,12 @@ sweep_params = {
         'depths': [0]
     },
 }
+
+def artifact_exists(width, depth, net, eraser):
+    artifact_name = f"{net}_h={width}_d={depth}_{eraser}_sweep.pth"
+    return (Path("/mnt/ssd-1/lucia/results") / artifact_name).exists()
+
+
 def main():
     args = parse_args()
 
@@ -70,9 +76,12 @@ def main():
     
     for eraser in args.erasers:
         for width in widths:
-            run_training(width, depths[0], args.net, eraser, args.device)
+            if not artifact_exists(width, depths[0], args.net, eraser):
+                run_training(width, depths[0], args.net, eraser, args.device)
+
         for depth in depths:
-            run_training(widths[0], depth, args.net, eraser, args.device)
+            if not artifact_exists(widths[0], depth, args.net, eraser):
+                run_training(widths[0], depth, args.net, eraser, args.device)
 
 if __name__ == "__main__":
     main()

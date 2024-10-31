@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch import optim
-from typing import List, Optional
+from typing import Optional
 
 from mdl.probe import Probe
 
@@ -137,7 +137,7 @@ class ResNetProbe(Probe):
     def __init__(
         self,
         num_classes: int = 2,
-        num_layers: int = 4,  # ResNet-18 configuration
+        num_layers: int = 4,
         hidden_size: int = 128,
         learning_rate: float = 0.005,
         momentum: float = 0.9,

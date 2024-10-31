@@ -91,15 +91,13 @@ class ViTProbe(Probe):
         cfg = ViTConfig(
             image_size=32,
             num_channels=3,
-            patch_size=1,
+            patch_size=4,
             num_labels=num_classes,
             hidden_size=hidden_size,
             num_hidden_layers=num_layers,
             num_attention_heads=4,
-            intermediate_size=hidden_size * 2, # TODO * 4 if sufficient VRAM
+            intermediate_size=hidden_size * 2,
             hidden_act="gelu",
-            hidden_dropout_prob=0.1,
-            attention_probs_dropout_prob=0.1,
         )
         self.net = ViTForImageClassification(cfg).to(device)
 

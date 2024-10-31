@@ -5,7 +5,6 @@ from functools import partial
 import wandb
 import torch
 import torch.nn.functional as F
-import torchvision as tv
 import torchvision.transforms.v2 as transforms
 from torchvision.transforms.v2.functional import to_tensor
 from concept_erasure import LeaceFitter, OracleEraser, OracleFitter, QuadraticFitter, LeaceEraser
@@ -129,13 +128,6 @@ if __name__ == "__main__":
             transforms.RandomHorizontalFlip(),
         ])
 
-    sweep = Sweep(
-        X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64,
-        num_chunks=10,
-        probe_cls=model_cls,
-        probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width),
-    )
-
     def erase(x: Tensor, y: Tensor, eraser):
         assert y.ndim == 1
         assert x.ndim > 1 # otherwise requires unsqueeze
@@ -177,9 +169,16 @@ if __name__ == "__main__":
             else:
                 run = None
 
+            sweep = Sweep(
+                X.shape[1] * X.shape[2] * X.shape[3], k, device=X.device, dtype=torch.float64,
+                num_chunks=10, logger=run,
+                probe_cls=model_cls,
+                probe_kwargs=dict(num_layers=args.depth, hidden_size=args.width),
+            )
+
             results.append(sweep.run(
                 X.double(), Y, seed=seed, transform=transform, 
-                augment=augment, reduce_lr_on_plateau=False, logger=run,
+                augment=augment, reduce_lr_on_plateau=False,
             ))
             
             if not 'test' in args.name:

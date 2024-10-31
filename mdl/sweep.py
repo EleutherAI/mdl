@@ -63,6 +63,8 @@ class Sweep:
     val_frac: float = 0.2
     """Fraction of each chunk to use for validation."""
 
+    logger: Any | None = None
+
     device: str | torch.device = "cpu"
     dtype: torch.dtype | None = None
 
@@ -100,7 +102,7 @@ class Sweep:
         curve = []
         total_mdl = 0.0
 
-        for n, next_n in pbar:
+        for chunk_idx, (n, next_n) in enumerate(pbar):
             # Shuffle data
             indices = torch.randperm(len(x), device=self.device, generator=rng)
             x, y = x[indices], y[indices]
@@ -126,6 +128,7 @@ class Sweep:
                 y_val=val_y,
                 verbose=False,
                 transform=transform,
+                logger=self.logger if chunk_idx == len(pbar) - 1 else None,
                 **fit_kwargs,
             )
 

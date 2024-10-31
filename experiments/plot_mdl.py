@@ -6,6 +6,9 @@ from plotly.subplots import make_subplots
 import plotly.express as px
 from pathlib import Path
 
+import plotly.io as pio   
+pio.kaleido.scope.mathjax = None # https://github.com/plotly/plotly.py/issues/3469
+
 
 def load_sweep_data(data_path: Path) -> pd.DataFrame:
     """Load and parse sweep data files into a DataFrame."""
@@ -44,46 +47,47 @@ def create_plots(df: pd.DataFrame, output_dir: Path):
 
     eraser_types = df['eraser'].unique()
 
-    mean_df = df.groupby(['model', 'width', 'depth', 'eraser'])['mdl'].agg(['mean', 'std']).reset_index()
+    mean_df = df.groupby(
+        ['model', 'width', 'depth', 'eraser']
+    )['mdl'].agg(['mean', 'std']).reset_index()
 
     for net_type in df['model'].unique():
+        subplot_titles= [
+            'Baseline' if eraser == 'none' else eraser.upper() for eraser in eraser_types
+        ]
+        subplot_titles = [title for title in sum(zip(subplot_titles, subplot_titles), ())]
+        
         fig = make_subplots(
             rows=len(eraser_types), cols=2,
-            subplot_titles=[f"{eraser.upper()} - Depth-wise" 
-                            if i % 2 == 1 
-                            else f"{eraser.upper()} - Width-wise" 
-                            for eraser in eraser_types for i in range(2)
-            ],
-            vertical_spacing=0.1,
-            horizontal_spacing=0.05,
+            subplot_titles=subplot_titles,
+            vertical_spacing=0.2,
             row_heights=[400] * len(eraser_types)
         )
         fig.update_layout(
-            title=f"{net_type} Network Analysis",
+            title=f"{net_type.title()} Network Analysis",
             height=300 * len(eraser_types),
             width=1200,
             showlegend=False,
         )
+        fig.update_yaxes(matches="y1")
 
         net_mean_df = mean_df[mean_df['model'] == net_type]
         net_df = df[df['model'] == net_type]
 
         widths = sorted(net_mean_df['width'].unique())
         depths = sorted(net_mean_df['depth'].unique())
+
         reference_width = widths[0]
         reference_depth = depths[0]
         
         for row, eraser in enumerate(eraser_types, 1):
-            fig.update_xaxes(title_text="Depth", row=row, col=1)
-            fig.update_xaxes(title_text="Width", row=row, col=2)
-            fig.update_yaxes(title_text="MDL Score", row=row, col=1)
-            fig.update_yaxes(title_text="MDL Score", row=row, col=2)
+            if row == len(eraser_types):
+                fig.update_xaxes(title_text="Depth", row=row, col=1)
+                fig.update_xaxes(title_text="Width", row=row, col=2)
+            fig.update_yaxes(title_text="MDL (bits per sample)", row=row, col=1)
 
             eraser_mean_df = net_mean_df[net_mean_df['eraser'] == eraser]
             eraser_df = net_df[net_df['eraser'] == eraser]
-            if eraser_mean_df.empty:
-                breakpoint()
-                continue
 
             mean_depth = eraser_mean_df[eraser_mean_df['width'] == reference_width]
             depth_seeds = eraser_df[eraser_df['width'] == reference_width]
