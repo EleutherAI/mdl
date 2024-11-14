@@ -65,6 +65,8 @@ class Sweep:
 
     logger: Any | None = None
 
+    # name: str | None = None
+
     device: str | torch.device = "cpu"
     dtype: torch.dtype | None = None
 
@@ -128,7 +130,8 @@ class Sweep:
                 y_val=val_y,
                 verbose=False,
                 transform=transform,
-                logger=self.logger if chunk_idx == len(pbar) - 1 else None,
+                logger=self.logger, # if chunk_idx == len(pbar) - 1 else None,
+                # save_name=self.name if chunk_idx == len(pbar) - 1 else None,
                 **fit_kwargs,
             )
 

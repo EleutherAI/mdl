@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
-from torch import optim
+from torch import Tensor, optim
 from typing import Optional
+
+from mup import MuSGD
 
 from mdl.probe import Probe
 
@@ -144,9 +145,13 @@ class ResNetProbe(Probe):
         weight_decay: float = 5e-4,
         device: str | torch.device | None = None,
         dtype: torch.dtype | None = None,
+        *,
         num_features: int = 3,
+        mup: bool = False
     ):
         super().__init__(num_features, num_classes, device, dtype)
+
+        self.mup = mup
 
         self.net = ResNet(
             num_layers=num_layers,
@@ -182,7 +187,8 @@ class ResNetProbe(Probe):
         self.std_device = self.std.to(self.device)
 
     def build_optimizer(self) -> optim.Optimizer:
-        return optim.SGD(
+        opt_cls = MuSGD if self.mup else optim.SGD
+        return opt_cls(
             self.parameters(),
             lr=self.learning_rate,
             momentum=self.momentum,

@@ -2,9 +2,11 @@ import math
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import Callable
+import math
 
 import torch
 from torch import Tensor, nn, optim
+from schedulefree import AdamWScheduleFree
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_loss,
 )
@@ -42,6 +44,7 @@ class Probe(nn.Module, ABC):
         batch_size: int = 128,
         early_stop_epochs: int = 4,
         max_epochs: int = 50,
+        # TODO remove 
         reduce_lr_on_plateau: bool = True,
         return_validation_losses: bool = False,
         seed: int = 42,
@@ -49,7 +52,7 @@ class Probe(nn.Module, ABC):
         verbose: bool = False,
         x_val: Tensor | None = None,
         y_val: Tensor | None = None,
-        logger = None,
+        logger = None
     ):
         """Fits the model to the input data using Adam with L2 regularization.
 
@@ -94,16 +97,7 @@ class Probe(nn.Module, ABC):
         )
 
         opt = self.build_optimizer()
-        schedule = (
-            optim.lr_scheduler.LambdaLR(opt, lambda _: 1.0)
-            if reduce_lr_on_plateau
-            else optim.lr_scheduler.CosineAnnealingLR(opt, max_epochs)
-        )
-        schedule = (
-            optim.lr_scheduler.LambdaLR(opt, lambda _: 1.0)
-            if reduce_lr_on_plateau
-            else optim.lr_scheduler.CosineAnnealingLR(opt, max_epochs)
-        )
+
         pbar = trange(max_epochs, desc="Epoch", disable=not verbose)
 
         best_loss = torch.inf
@@ -112,12 +106,16 @@ class Probe(nn.Module, ABC):
         num_plateaus = 0
 
         self.eval()
+        # Check for possible bug when using AdamWScheduleFree with MuAdam (MuAdam should)
+        # return AdamWScheduleFree such that this call works but...)
+        if isinstance(opt, AdamWScheduleFree):
+            opt.eval()
         x_val = transform(x_val, y_val)
 
         # Record initial weights for weight change norm logging
         initial_weights = deepcopy(self.state_dict()) if logger is not None else None
 
-        for ep in pbar:
+        for i, ep in enumerate(pbar):
             val_loss = self.evaluate(x_val, y_val, batch_size)
             val_acc = self.accuracy(x_val, y_val, batch_size)
 
@@ -137,39 +135,31 @@ class Probe(nn.Module, ABC):
                 opt.load_state_dict(best_opt_state)
                 self.load_state_dict(best_state)
 
-                # Manual ReduceLROnPlateau
-                if reduce_lr_on_plateau:
-                    opt.param_groups[0]["lr"] *= 0.5
-                if reduce_lr_on_plateau:
-                    opt.param_groups[0]["lr"] *= 0.5
-
             val_losses.append(best_loss)
             pbar.set_postfix(loss=best_loss)
 
             ### TRAIN LOOP ###
             self.train()
+            if isinstance(opt, AdamWScheduleFree):
+                opt.train()
             train_losses = []
 
-            for x_batch, y_batch in zip(
-                x_train.split(batch_size), y_train.split(batch_size)
-            ):
+            for x_batch, y_batch in zip(x_train.split(batch_size), y_train.split(batch_size)):
                 opt.zero_grad()
 
-                x_batch = transform(augment(x_batch), y_batch)
+                x_batch = augment(transform(x_batch, y_batch))
                 loss = self.loss(x_batch, y_batch)
                 train_losses.append(loss.item())
                 loss.backward()
                 opt.step()
 
-            # Update learning rate
-            schedule.step()
-
             if logger is not None:
                 # Calculate norm of parameters' mean differences from initialization
-                w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius = self.calculate_weight_change_norms(initial_weights)
+                w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius = self.dist_from_init(initial_weights)
 
                 logger.log({
-                    "epoch": ep,
+                    "epoch": i,
+                    "step": (i * len(x_train) // batch_size) + len(x_train) // batch_size,
                     "train/loss": sum(train_losses) / len(train_losses),
                     "val/loss": val_loss,
                     "val/accuracy": val_acc,
@@ -216,7 +206,7 @@ class Probe(nn.Module, ABC):
         """Computes the loss of the probe on the given data."""
         return self.loss_fn(self(x.to(self.dtype)).squeeze(-1), y, smoothing)
 
-    def calculate_weight_change_norms(self, initial_weights):
+    def dist_from_init(self, initial_weights) -> tuple[float, float, float, float]:
         """Calculate Frobenius and spectral norms of weight changes for logging."""
         current_weights = self.state_dict()
         
@@ -235,7 +225,7 @@ class Probe(nn.Module, ABC):
                 if len(weight_diff.shape) > 2:
                     weight_diff = weight_diff.reshape(weight_diff.shape[0], -1)
                     
-                w_frobenius_norm += torch.norm(weight_diff, p='fro') / num_weights
+                w_frobenius_norm += torch.norm(weight_diff, p='fro').item() / num_weights
 
                 # Calculate only the largest singular value
                 U, S, Vh = torch.svd_lowrank(weight_diff, q=1)
@@ -243,7 +233,7 @@ class Probe(nn.Module, ABC):
             
             if 'bias' in name:
                 bias_diff = current_param - initial_weights[name]
-                b_l1 += torch.norm(bias_diff, p=1) / num_biases
-                b_frobenius += torch.norm(bias_diff, p=2) / num_biases
+                b_l1 += torch.norm(bias_diff, p=1).item() / num_biases
+                b_frobenius += torch.norm(bias_diff, p=2).item() / num_biases
 
         return w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius

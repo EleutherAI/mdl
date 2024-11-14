@@ -1,12 +1,18 @@
+from typing import Literal
+
 import torch
 import torchvision as tv
-import math
 from torch import Tensor, nn, optim
-from transformers import ViTConfig, ViTForImageClassification, ConvNextV2Config, ConvNextV2ForImageClassification
+from transformers import (
+    ConvNextV2Config, ConvNextV2ForImageClassification, 
+    SwinForImageClassification, SwinConfig
+)
+from mup import MuAdam, MuSGD
+from schedulefree import AdamWScheduleFree
 
 from .probe import Probe
 
-    
+ 
 class VisionProbe(Probe):
     """Probe based on a TorchVision model. Defaults to ResNet-18."""
 
@@ -19,8 +25,12 @@ class VisionProbe(Probe):
         model: str = "resnet18",
         device: str | torch.device | None = None,
         dtype: torch.dtype | None = None,
+        *,
         num_features: int = 3,  # Unused
+        hidden_size: int = 2,  # Unused
+        num_layers: int = 2,  # Unused
         pretrained: bool = False,
+        mup: bool = False
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
@@ -43,6 +53,8 @@ class VisionProbe(Probe):
                 dtype=dtype,
             )
             self.net.maxpool = torch.nn.Identity(device=device, dtype=dtype)
+
+        self.mup = mup
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.weight_decay = weight_decay
@@ -64,7 +76,8 @@ class VisionProbe(Probe):
             net.maxpool = nn.Identity()
 
     def build_optimizer(self) -> optim.Optimizer:
-        return optim.SGD(
+        opt_cls = MuSGD if self.mup else optim.SGD
+        return opt_cls(
             self.parameters(),
             lr=self.learning_rate,
             momentum=self.momentum,
@@ -75,41 +88,6 @@ class VisionProbe(Probe):
         return self.net(self.norm(x))
 
 
-class ViTProbe(Probe):
-    def __init__(
-            self, 
-            # Unused
-            num_features: int, 
-            hidden_size: int,
-            num_classes: int = 2, 
-            num_layers: int = 2,
-            device: str | torch.device | None = None, 
-            dtype: torch.dtype | None = None
-    ):
-        super().__init__(num_features, num_classes, device, dtype)
-
-        cfg = ViTConfig(
-            image_size=32,
-            num_channels=3,
-            patch_size=4,
-            num_labels=num_classes,
-            hidden_size=hidden_size,
-            num_hidden_layers=num_layers,
-            num_attention_heads=4,
-            intermediate_size=hidden_size * 2,
-            hidden_act="gelu",
-        )
-        self.net = ViTForImageClassification(cfg).to(device)
-
-    def build_optimizer(self):
-        return torch.optim.AdamW(
-            self.parameters(), lr=3e-3, weight_decay=0.3, betas=(0.9, 0.999)
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.net(x).logits
-
-
 class ConvNextProbe(Probe):
     def __init__(
             self,
@@ -118,13 +96,23 @@ class ConvNextProbe(Probe):
             num_layers: int = 2,
             hidden_size: int = 2,
             device: str | torch.device | None = None, 
-            dtype: torch.dtype | None = None
+            dtype: torch.dtype | None = None,
+            *,
+            learning_rate: float = 1e-3,
+            betas: tuple[float, float] = (0.9, 0.999),
+            schedule_free: bool = False,
+            mup: bool = False
         ):
         assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
+
+        self.learning_rate = learning_rate
+        self.betas = betas
+        self.schedule_free = schedule_free
+        self.mup = mup
         
         depths = [1, 1, 3, 1]
-        depths *= num_layers
+        depths = [depth * num_layers for depth in depths]
 
         hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, 4)]
         
@@ -133,7 +121,6 @@ class ConvNextProbe(Probe):
                 num_channels=3,
                 depths=depths,
                 drop_path_rate=0.1,
-                num_stages=4,
                 hidden_sizes=hidden_sizes,
                 num_labels=num_classes,
                 # The default of 4 x 4 patches shrinks the image too aggressively for
@@ -142,9 +129,73 @@ class ConvNextProbe(Probe):
             )
 
         self.net = ConvNextV2ForImageClassification(cfg).to(device)
+
     
     def build_optimizer(self):
-        return torch.optim.AdamW(self.parameters())
+        opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+        if self.mup:
+            return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+        return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
+
+    def forward(self, x):
+        return self.net(x).logits
+
+
+class SwinProbe(Probe):
+    def __init__(
+            self,
+            num_features: int, 
+            num_classes: int = 2, 
+            num_layers: int = 2,
+            hidden_size: int = 2,
+            device: str | torch.device | None = None, 
+            dtype: torch.dtype | None = None,
+            *,
+            learning_rate: float = 1e-3,
+            betas: tuple[float, float] = (0.9, 0.999),
+            schedule_free: bool = False,
+            mup: bool = False,
+        ):
+        assert num_features == 3 * 32 * 32
+        super().__init__(num_features, num_classes, device, dtype)
+
+        self.learning_rate = learning_rate
+        self.betas = betas
+        self.schedule_free = schedule_free
+        self.mup = mup
+
+        # depths=[1, 2, 1] seen in a gist somewhere
+        depths = [1, 1, 2]
+        depths = [depth * num_layers for depth in depths]
+
+        # num_heads=[2, 2, 4] seen in a gist somewhere
+        num_heads = [1, 1, 2]
+        num_heads = [num_head * num_layers for num_head in num_heads]
+
+        hidden_sizes = [num_heads[0] * hidden_size * 2**i for i in range(3)] 
+        
+        cfg = SwinConfig(
+                image_size=32,
+                num_channels=3,
+                depths=depths,
+                drop_path_rate=0.1,
+                hidden_sizes=hidden_sizes,
+                num_labels=num_classes,
+                embed_dim=num_heads[0] * 4, # Can scale this and the hidden_sizes * 4 arbitrarily
+                num_heads=num_heads,
+                # The default of 4 x 4 patches shrinks the image too aggressively for
+                # low-resolution images like CIFAR-10
+                patch_size=2,
+                window_size=2,
+            )
+
+        self.net = SwinForImageClassification(cfg).to(device)
+
+    def build_optimizer(self):
+        opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+        if self.mup:
+            return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+        return torch.optim.AdamW(self.parameters(), lr=self.learning_rate, betas=self.betas)
 
     def forward(self, x):
         return self.net(x).logits

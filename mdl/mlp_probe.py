@@ -1,13 +1,15 @@
-from functools import partial
 from itertools import pairwise
+from functools import partial
 
 import torch
 from torch import Tensor, nn, optim
+from schedulefree import AdamWScheduleFree
+from mup import MuReadout, MuAdam, MuSGD
 
 from .probe import Probe
 
 
-class SeqMlpProbe(Probe):
+class MlpProbe(Probe):
     def __init__(
         self,
         num_features: int,
@@ -17,11 +19,19 @@ class SeqMlpProbe(Probe):
         dtype: torch.dtype | None = None,
         *,
         num_layers: int = 2,
+        learning_rate: float = 1e-3,
+        betas: tuple[float, float] = (0.9, 0.999),
+        schedule_free: bool = False,
+        mup: bool = False
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
-        assert hidden_size is not None
+        self.learning_rate = learning_rate
+        self.schedule_free = schedule_free
+        self.betas = betas
+        self.mup = mup
 
+        assert hidden_size is not None
         k, h = num_classes, hidden_size
         self.net = torch.nn.Sequential(
             torch.nn.Linear(num_features, h, device=device, dtype=dtype),
@@ -33,11 +43,14 @@ class SeqMlpProbe(Probe):
                 )
                 for _ in range(num_layers - 1)
             ],
-            torch.nn.Linear(h, k, device=device, dtype=dtype),
+            MuReadout(in_features=h, out_features=k, device=device, dtype=dtype, readout_zero_init=True),
         )
 
     def build_optimizer(self):
-        return torch.optim.AdamW(self.parameters())
+        opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+        if self.mup:
+            return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+        return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net(x)
@@ -55,9 +68,15 @@ class ResMlpProbe(Probe):
         dtype: torch.dtype | None = None,
         *,
         num_layers: int = 2,
+        betas: tuple[float, float] = (0.9, 0.999),
+        schedule_free: bool = False,
+        mup: bool = False
     ):
         super().__init__(num_features, num_classes, device, dtype)
         self.num_layers = num_layers
+        self.betas = betas
+        self.schedule_free = schedule_free
+        self.mup = mup
 
         if hidden_size is None:
             hidden_size = (
@@ -65,7 +84,7 @@ class ResMlpProbe(Probe):
             )
 
         output_dim = num_classes if num_classes > 2 else 1
-        sizes = [num_features] + [hidden_size] * (num_layers)
+        sizes = [num_features] + [hidden_size] * (num_layers - 1)
 
         self.trunk = nn.Sequential(
             *[
@@ -74,7 +93,6 @@ class ResMlpProbe(Probe):
             ]
         )
 
-        # breakpoint()
         self.fc = nn.Linear(hidden_size, output_dim, device=device, dtype=dtype)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -83,19 +101,20 @@ class ResMlpProbe(Probe):
 
     def build_optimizer(self) -> optim.Optimizer:
         if self.num_layers > 1:
-            return torch.optim.SGD(
-                self.parameters(), lr=0.005, momentum=0.9, weight_decay=5e-4
-            )
-            # return optim.AdamW(self.parameters())
+            opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+            if self.mup:
+                return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+            return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
         else:
             # Use Nesterov SGD for linear probes. The problem is convex and there's
             # really no need to use an adaptive learning rate. We can set the fixed
             # LR considerably higher and this seems to help with convergence.
-            return optim.SGD(
+            opt_cls = MuSGD if self.mup else optim.SGD
+            return opt_cls(
                 self.parameters(),
                 # Learning rate of 0.1 with momentum 0.9 is "really" an LR of unity in
                 # PyTorch's parametrization; see https://youtu.be/k8fTYJPd3_I
-                lr=0.1,
+                lr=0.1
                 momentum=0.9,
                 # Nesterov seems to be strictly better than regular momentum
                 nesterov=True,
@@ -104,38 +123,8 @@ class ResMlpProbe(Probe):
             )
 
 
-class LinearProbe(Probe):
-    def __init__(
-        self,
-        num_features: int,
-        num_classes: int = 2,
-        # Unused
-        hidden_size: int | None = None,
-        device: str | torch.device | None = None,
-        dtype: torch.dtype | None = None,
-        *,
-        # Unused
-        num_layers: int = 2,
-    ):
-        super().__init__(num_features, num_classes, device, dtype)
 
-        self.fc = nn.Linear(num_features, num_classes, device=device, dtype=dtype)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.fc(x).squeeze(-1)
-
-    def build_optimizer(self) -> optim.Optimizer:
-        return optim.SGD(
-            self.parameters(),
-            # Learning rate of 0.1 with momentum 0.9 is "really" an LR of unity in
-            # PyTorch's parametrization; see https://youtu.be/k8fTYJPd3_I
-            lr=0.1,
-            momentum=0.9,
-            # Nesterov seems to be strictly better than regular momentum
-            nesterov=True,
-            # Use same weight decay as AdamW above
-            weight_decay=0.01,
-        )
+LinearProbe = partial(MlpProbe, num_layers=1)
 
 
 class MlpBlock(nn.Module):
