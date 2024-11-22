@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor, nn, optim
-from mup import MuAdam
+from mup import MuAdam, MuReadout, load_base_shapes, set_base_shapes
 from schedulefree import AdamWScheduleFree
 
 from .probe import Probe
@@ -18,14 +18,14 @@ class QuadraticProbe(Probe):
         learning_rate: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         schedule_free: bool = False,
-        mup: bool = False,
+        base_shapes_path: str | None = None,
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
         self.learning_rate = learning_rate
         self.betas = betas
         self.schedule_free = schedule_free
-        self.mup = mup
+        self.mup = base_shapes_path is not None
 
         self.norm = nn.BatchNorm1d(num_classes, device=device, dtype=dtype)
         self.bilinear = nn.Bilinear(
@@ -36,12 +36,18 @@ class QuadraticProbe(Probe):
             device=device,
             dtype=dtype,
         )
-        self.linear = nn.Linear(
+        self.linear = MuReadout(
             num_features,
             num_classes,
             device=device,
             dtype=dtype,
+            readout_zero_init=True
         )
+
+        # Configure MuP
+        if base_shapes_path:
+            base_shapes = load_base_shapes(base_shapes_path)
+            set_base_shapes(self, base_shapes)
 
     def build_optimizer(self) -> optim.Optimizer:
         opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW

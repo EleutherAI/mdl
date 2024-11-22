@@ -70,6 +70,8 @@ class Sweep:
     device: str | torch.device = "cpu"
     dtype: torch.dtype | None = None
 
+    ckpt_every: int | None = None
+
     def __post_init__(self):
         assert self.num_features > 0
         assert self.num_classes > 1
@@ -130,7 +132,8 @@ class Sweep:
                 y_val=val_y,
                 verbose=False,
                 transform=transform,
-                logger=self.logger, # if chunk_idx == len(pbar) - 1 else None,
+                logger=self.logger if chunk_idx == len(pbar) - 1 else None,
+                ckpt_every=self.ckpt_every if chunk_idx == len(pbar) - 1 else None,
                 # save_name=self.name if chunk_idx == len(pbar) - 1 else None,
                 **fit_kwargs,
             )

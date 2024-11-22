@@ -5,154 +5,208 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
 from pathlib import Path
+import numpy as np
 
-import plotly.io as pio   
-pio.kaleido.scope.mathjax = None # https://github.com/plotly/plotly.py/issues/3469
+from experiments.sweep_eraser import sweep_params
+
+import plotly.io as pio
+
+pio.kaleido.scope.mathjax = None  # https://github.com/plotly/plotly.py/issues/3469
 
 
 def load_sweep_data(data_path: Path) -> pd.DataFrame:
     """Load and parse sweep data files into a DataFrame."""
     records = []
-    
+
     for file in data_path.glob("*.pth"):
         # Parse filename
-        net_type, width, depth, eraser, _ = file.stem.split('_')
-        width = int(width.split('=')[1])
-        depth = int(depth.split('=')[1])
-        
+        net, act, width, depth, eraser, _ = file.stem.split("_")
+        width = int(width.split("=")[1])
+        depth = int(depth.split("=")[1])
+
         # Load data and create records
         data = torch.load(file)
-        for eraser_name, mdls in data.items():
-            for seed, mdl_result in enumerate(mdls):
-                records.append({
-                    'model': net_type,
-                    'width': width,
-                    'depth': depth,
-                    'eraser': eraser_name,
-                    'seed': seed,
-                    'mdl': mdl_result.mdl,
-                    'ce_curve': mdl_result.ce_curve,
-                    'sample_sizes': mdl_result.sample_sizes,
-                    'total_trials': mdl_result.total_trials
-                })
+        for seed, mdl_result in enumerate(data):
+            records.append(
+                {
+                    "net": net,
+                    "act": act,
+                    "width": width,
+                    "depth": depth,
+                    "eraser": eraser,
+                    "seed": seed,
+                    "mdl": mdl_result.mdl,
+                    "ce_curve": mdl_result.ce_curve,
+                    "sample_sizes": mdl_result.sample_sizes,
+                    "total_trials": mdl_result.total_trials,
+                }
+            )
 
     return pd.DataFrame(records)
 
 
 def create_plots(df: pd.DataFrame, output_dir: Path):
-    """Create plots for each network type."""
+    """Create plots for each network type. Include results over three activation functions for MLPs."""
     output_dir.mkdir(exist_ok=True)
 
     colors = px.colors.qualitative.Set1
 
-    eraser_types = df['eraser'].unique()
+    eraser_types = ["control", "leace", "qleace"]
 
-    mean_df = df.groupby(
-        ['model', 'width', 'depth', 'eraser']
-    )['mdl'].agg(['mean', 'std']).reset_index()
+    df = df.sort_values(["depth", "width"])
 
-    for net_type in df['model'].unique():
-        subplot_titles= [
-            'Baseline' if eraser == 'none' else eraser.upper() for eraser in eraser_types
+    for net in df["net"].unique():
+        subplot_titles = [
+            eraser.upper() if eraser != "control" else eraser.title()
+            for eraser in eraser_types
         ]
-        subplot_titles = [title for title in sum(zip(subplot_titles, subplot_titles), ())]
-        
+        subplot_titles = [
+            title for title in sum(zip(subplot_titles, subplot_titles), ())
+        ]
+
         fig = make_subplots(
-            rows=len(eraser_types), cols=2,
+            rows=len(eraser_types),
+            cols=2,
             subplot_titles=subplot_titles,
             vertical_spacing=0.2,
-            row_heights=[400] * len(eraser_types)
+            row_heights=[400] * len(eraser_types),
         )
         fig.update_layout(
-            title=f"{net_type.title()} Network Analysis",
+            title=f"{net.title()} Network Analysis",
             height=300 * len(eraser_types),
             width=1200,
             showlegend=False,
         )
+
         fig.update_yaxes(matches="y1")
 
-        net_mean_df = mean_df[mean_df['model'] == net_type]
-        net_df = df[df['model'] == net_type]
+        reference_width = sweep_params[net]["mup_width"]
+        reference_depth = sweep_params[net]["mup_depth"]
 
-        widths = sorted(net_mean_df['width'].unique())
-        depths = sorted(net_mean_df['depth'].unique())
-
-        reference_width = widths[0]
-        reference_depth = depths[0]
-        
         for row, eraser in enumerate(eraser_types, 1):
             if row == len(eraser_types):
                 fig.update_xaxes(title_text="Depth", row=row, col=1)
                 fig.update_xaxes(title_text="Width", row=row, col=2)
+
+            for col, type in zip([1, 2], ["depth", "width"]):
+                fig.update_xaxes(
+                    type="log",
+                    row=row,
+                    col=col,
+                    tickvals=[
+                        2**i
+                        for i in range(
+                            int(np.log2(min(df[type]))),
+                            int(np.log2(max(df[type]))) + 1,
+                        )
+                    ],
+                    ticktext=[
+                        f"2^{i}"
+                        for i in range(
+                            int(np.log2(min(df[type]))),
+                            int(np.log2(max(df[type]))) + 1,
+                        )
+                    ],
+                )
             fig.update_yaxes(title_text="MDL (bits per sample)", row=row, col=1)
 
-            eraser_mean_df = net_mean_df[net_mean_df['eraser'] == eraser]
-            eraser_df = net_df[net_df['eraser'] == eraser]
+            for act_idx, act in enumerate(df["act"].unique()):
+                data = df[
+                    (df["eraser"] == eraser)
+                    & (df["act"] == act)
+                    & (df["net"] == net)
+                ]
+                mean_data = (
+                    data.groupby(["width", "depth"])["mdl"]
+                    .agg(["mean", "std"])
+                    .reset_index()
+                )
 
-            mean_depth = eraser_mean_df[eraser_mean_df['width'] == reference_width]
-            depth_seeds = eraser_df[eraser_df['width'] == reference_width]
+                seed_depth_data = data[data["width"] == reference_width]
+                mean_depth_data = mean_data[mean_data["width"] == reference_width]
 
-            fig.add_trace(
-                go.Scatter(
-                    x=depth_seeds['depth'],
-                    y=depth_seeds['mdl'],
-                    mode='markers',
-                    marker=dict(color=colors[0], size=5, opacity=0.3),
-                    name=f'{eraser} (seeds)',
-                    showlegend=False,
-                ),
-                row=row, col=1
-            )
-            
-            fig.add_trace(
-                go.Scatter(
-                    x=mean_depth['depth'],
-                    y=mean_depth['mean'],
-                    mode='lines+markers',
-                    name=f'{eraser} (mean)',
-                    line=dict(color=colors[0], width=2),
-                ),
-                row=row, col=1
-            )
+                fig.add_trace(
+                    go.Scatter(
+                        x=seed_depth_data["depth"],
+                        y=seed_depth_data["mdl"],
+                        mode="markers",
+                        marker=dict(color=colors[act_idx], size=5, opacity=0.3),
+                        name=f"{act}",
+                        showlegend=False,
+                    ),
+                    row=row,
+                    col=1,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=mean_depth_data["depth"],
+                        y=mean_depth_data["mean"],
+                        mode="lines+markers",
+                        line=dict(width=2),
+                        name=f"{act}",
+                        showlegend=row == 1,
+                        marker=dict(color=colors[act_idx]),
+                    ),
+                    row=row,
+                    col=1,
+                )
 
-            # Width Analysis (right column)
-            width_data = eraser_mean_df[eraser_mean_df['depth'] == reference_depth]
-            width_seeds = eraser_df[eraser_df['depth'] == reference_depth]
-            
-            fig.add_trace(
-                go.Scatter(
-                    x=width_seeds['width'],
-                    y=width_seeds['mdl'],
-                    mode='markers',
-                    marker=dict(color=colors[1], size=5, opacity=0.3),
-                    name=f'{eraser} (seeds)',
-                    showlegend=False
-                ),
-                row=row, col=2
-            )
-            
-            fig.add_trace(
-                go.Scatter(
-                    x=width_data['width'],
-                    y=width_data['mean'],
-                    mode='lines+markers',
-                    name=f'{eraser} (mean)',
-                    line=dict(color=colors[1], width=2),
-                ),
-                row=row, col=2
-            )
+                seed_width_data = data[data["depth"] == reference_depth]
+                mean_width_data = mean_data[mean_data["depth"] == reference_depth]
 
-        fig.write_image(output_dir / f"{net_type}_mdl_analysis.pdf", format='pdf')
-    
+                fig.add_trace(
+                    go.Scatter(
+                        x=seed_width_data["width"],
+                        y=seed_width_data["mdl"],
+                        mode="markers",
+                        marker=dict(size=5, opacity=0.3, color=colors[act_idx]),
+                        name=f"{act}",
+                        showlegend=False,
+                    ),
+                    row=row,
+                    col=2,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=mean_width_data["width"],
+                        y=mean_width_data["mean"],
+                        mode="lines+markers",
+                        line=dict(width=2),
+                        name=f"{act}",
+                        showlegend=False,
+                        marker=dict(color=colors[act_idx]),
+                    ),
+                    row=row,
+                    col=2,
+                )
+
+                # If more than one act type
+                if len(df["act"].unique()) > 1:
+                    fig.update_layout(
+                        showlegend=True,
+                        legend=dict(
+                            title="Activation Types",
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1,
+                        ),
+                    )
+
+        fig.write_image(output_dir / f"{net}_mdl_analysis.pdf", format="pdf")
+
+
 def main():
-    data_path = Path("/mnt/ssd-1/lucia/results")
+    data_path = Path("/mnt/ssd-1/lucia/24-11-21")
     output_dir = Path("data/images/sweep_plots")
-    
+
     print("Loading disk data into dataframe...")
     df = load_sweep_data(data_path)
 
     print("Creating plots...")
     create_plots(df, output_dir)
+
 
 if __name__ == "__main__":
     main()

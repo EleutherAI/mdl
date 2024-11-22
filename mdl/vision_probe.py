@@ -1,5 +1,3 @@
-from typing import Literal
-
 import torch
 import torchvision as tv
 from torch import Tensor, nn, optim
@@ -7,7 +5,7 @@ from transformers import (
     ConvNextV2Config, ConvNextV2ForImageClassification, 
     SwinForImageClassification, SwinConfig
 )
-from mup import MuAdam, MuSGD
+from mup import MuReadout, MuAdam, MuSGD, load_base_shapes, set_base_shapes
 from schedulefree import AdamWScheduleFree
 
 from .probe import Probe
@@ -27,10 +25,9 @@ class VisionProbe(Probe):
         dtype: torch.dtype | None = None,
         *,
         num_features: int = 3,  # Unused
-        hidden_size: int = 2,  # Unused
-        num_layers: int = 2,  # Unused
         pretrained: bool = False,
-        mup: bool = False
+        base_shapes_path: str | None = None,
+        **kwargs
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
@@ -54,7 +51,7 @@ class VisionProbe(Probe):
             )
             self.net.maxpool = torch.nn.Identity(device=device, dtype=dtype)
 
-        self.mup = mup
+        self.mup = base_shapes_path is not None
         self.learning_rate = learning_rate
         self.momentum = momentum
         self.weight_decay = weight_decay
@@ -101,7 +98,8 @@ class ConvNextProbe(Probe):
             learning_rate: float = 1e-3,
             betas: tuple[float, float] = (0.9, 0.999),
             schedule_free: bool = False,
-            mup: bool = False
+            base_shapes_path: str | None = None,
+            **kwargs
         ):
         assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
@@ -109,7 +107,7 @@ class ConvNextProbe(Probe):
         self.learning_rate = learning_rate
         self.betas = betas
         self.schedule_free = schedule_free
-        self.mup = mup
+        self.mup = base_shapes_path is not None
         
         depths = [1, 1, 3, 1]
         depths = [depth * num_layers for depth in depths]
@@ -128,7 +126,20 @@ class ConvNextProbe(Probe):
                 patch_size=1,
             )
 
-        self.net = ConvNextV2ForImageClassification(cfg).to(device)
+        self.net = ConvNextV2ForImageClassification(cfg).to(device=device, dtype=dtype)
+
+        # Configure MuP
+        self.net.classifier = MuReadout(
+            self.net.classifier.in_features,
+            self.net.classifier.out_features,
+            device=device,
+            dtype=dtype,
+            readout_zero_init=True
+        )
+
+        if base_shapes_path:
+            base_shapes = load_base_shapes(base_shapes_path)
+            set_base_shapes(self, base_shapes)
 
     
     def build_optimizer(self):
@@ -154,7 +165,7 @@ class SwinProbe(Probe):
             learning_rate: float = 1e-3,
             betas: tuple[float, float] = (0.9, 0.999),
             schedule_free: bool = False,
-            mup: bool = False,
+            base_shapes_path: str | None = None,
         ):
         assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
@@ -162,7 +173,7 @@ class SwinProbe(Probe):
         self.learning_rate = learning_rate
         self.betas = betas
         self.schedule_free = schedule_free
-        self.mup = mup
+        self.mup = base_shapes_path is not None
 
         # depths=[1, 2, 1] seen in a gist somewhere
         depths = [1, 1, 2]
@@ -189,7 +200,20 @@ class SwinProbe(Probe):
                 window_size=2,
             )
 
-        self.net = SwinForImageClassification(cfg).to(device)
+        self.net = SwinForImageClassification(cfg).to(device=device, dtype=dtype)
+
+        # Configure MuP
+        self.net.classifier = MuReadout(
+            self.net.classifier.in_features,
+            self.net.classifier.out_features,
+            device=device,
+            dtype=dtype,
+            readout_zero_init=True
+        )
+        
+        if base_shapes_path:
+            base_shapes = load_base_shapes(base_shapes_path)
+            set_base_shapes(self, base_shapes)
 
     def build_optimizer(self):
         opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW

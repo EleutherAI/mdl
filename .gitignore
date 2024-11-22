@@ -166,3 +166,6 @@ erasers_cache
 lightning_logs
 wandb
 images/
+
+probe-ckpts/
+*.bsh

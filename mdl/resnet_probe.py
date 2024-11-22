@@ -3,8 +3,7 @@ import torch.nn as nn
 from torch import Tensor, optim
 from typing import Optional
 
-from mup import MuSGD
-
+from mup import MuSGD, MuReadout, load_base_shapes, set_base_shapes
 from mdl.probe import Probe
 
 class BasicBlock(nn.Module):
@@ -147,11 +146,10 @@ class ResNetProbe(Probe):
         dtype: torch.dtype | None = None,
         *,
         num_features: int = 3,
-        mup: bool = False
+        base_shapes_path: str | None = None,
+        **kwargs
     ):
         super().__init__(num_features, num_classes, device, dtype)
-
-        self.mup = mup
 
         self.net = ResNet(
             num_layers=num_layers,
@@ -166,6 +164,7 @@ class ResNetProbe(Probe):
         self.momentum = momentum
         self.weight_decay = weight_decay
         self.device = device
+        self.mup = base_shapes_path is not None
 
         """
         import torch
@@ -185,6 +184,21 @@ class ResNetProbe(Probe):
         self.register_buffer('std', torch.tensor([0.2470, 0.2435, 0.2616]).view(1, 3, 1, 1))
         self.mean_device = self.mean.to(self.device)
         self.std_device = self.std.to(self.device)
+
+        # Configure MuP
+        self.net.fc = MuReadout(
+            self.net.fc.in_features,
+            self.net.fc.out_features,
+            device=device,
+            dtype=dtype,
+            readout_zero_init=True
+        )
+
+        if base_shapes_path:
+            base_shapes = load_base_shapes(base_shapes_path)
+            set_base_shapes(self, base_shapes)
+
+        
 
     def build_optimizer(self) -> optim.Optimizer:
         opt_cls = MuSGD if self.mup else optim.SGD
