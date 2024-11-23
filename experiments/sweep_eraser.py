@@ -111,7 +111,7 @@ sweep_params = {
         'mup_width': 128,
         'mup_depth': 2,
         'widths': [64, 128, 256, 512, 1024, 2048],
-        'depths': [2, 4, 6, 8] # Loses coherence at 16, 1 breaks probe
+        'depths': [2, 3, 4, 6, 8] # Loses coherence at 16, 1 breaks probe
     },
     # 'linear': {
     #     # Unused

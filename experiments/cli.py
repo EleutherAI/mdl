@@ -210,10 +210,8 @@ if __name__ == "__main__":
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} lr={args.lr} b1={args.b1}'        
-        if args.act != "relu":
-            wandb_name += f" act={args.act}"
-            
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr} b1={args.b1}'
+
         run = (
             wandb.init(
                 project="mdl",
@@ -315,5 +313,3 @@ if __name__ == "__main__":
         data_path
         / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}.pth",
     )
-
-
