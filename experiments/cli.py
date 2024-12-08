@@ -10,7 +10,7 @@ import torchvision.transforms.v2 as transforms
 from torchvision.transforms.v2.functional import to_tensor
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
-from concept_erasure.alf_qleace import AlfQLeaceFitter
+# from concept_erasure.alf_qleace import AlfQLeaceFitter
 from torch import Tensor
 from torchvision.datasets import CIFAR10
 from tqdm.auto import tqdm
@@ -75,7 +75,7 @@ def get_mnist():
 
 
 
-def get_cifar10():
+def get_cifar10(normalize: bool = False):
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
 
     images, labels = zip(*nontest)
@@ -100,6 +100,28 @@ def get_cifar10():
     test_images, test_labels = zip(*test)
     X_test: Tensor = torch.stack(list(map(to_tensor, test_images))).to(device)
     Y_test = torch.tensor(test_labels).to(device)
+
+    if normalize:
+        X_flat = X.reshape(X.shape[0], -1)
+        
+        mean = X_flat.mean(dim=0, keepdim=True)
+        X_centered = X_flat - mean
+        
+        cov = (X_centered.T @ X_centered) / (X_centered.shape[0] - 1)
+        
+        scaling = torch.sqrt(torch.diagonal(cov))
+        scaling = torch.where(scaling > 0, scaling, torch.ones_like(scaling))
+        
+        def normalize_data(data: Tensor) -> Tensor:
+            data_flat = data.reshape(data.shape[0], -1)
+            data_centered = data_flat - mean
+            data_normalized = data_centered / scaling
+            return data_normalized.reshape(data.shape)
+        
+        X = normalize_data(X)
+        X_train = normalize_data(X_train)
+        X_val = normalize_data(X_val)
+        X_test = normalize_data(X_test)
 
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
 
@@ -126,10 +148,11 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--save", action="store_true")
+    parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--trial", action="store_true", help="Run a single trial with all data")
     args = parser.parse_args()
 
-    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10()
+    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(normalize=args.normalize)
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
@@ -142,7 +165,7 @@ if __name__ == "__main__":
         cls = {
             "leace": LeaceFitter,
             "qleace": QuadraticFitter,
-            "qleace2": AlfQLeaceFitter,
+            # "qleace2": AlfQLeaceFitter,
         }[args.eraser]
 
         fitter = cls(
@@ -256,11 +279,11 @@ if __name__ == "__main__":
         if not args.debug
         else f"/mnt/ssd-1/lucia/debug-{args.out}-seeds"
     )
-    seed_path.mkdir(exist_ok=True)
+    seed_path.mkdir(exist_ok=True, parents=True)
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr} b1={args.b1}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr} b1={args.b1} n={args.normalize}'
 
         run = (
             wandb.init(
@@ -362,7 +385,7 @@ if __name__ == "__main__":
         if not args.debug
         else f"/mnt/ssd-1/lucia/debug-{args.out}"
     )
-    data_path.mkdir(exist_ok=True)
+    data_path.mkdir(exist_ok=True, parents=True)
     
     torch.save(
         results,
