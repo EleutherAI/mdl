@@ -21,6 +21,8 @@ def run_training(
         "--mup_depth", f"{mup_depth}",
         "--act", f"{args.act}"
     ]
+    if args.normalize:
+        cmd.append("--normalize")
     print(f"\nLaunching training...")
     print("Command:", " ".join(cmd))
     
@@ -46,6 +48,7 @@ def parse_args():
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--width", action="store_true")
     parser.add_argument("--depth", action="store_true")
+    parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace"])
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
@@ -111,7 +114,7 @@ sweep_params = {
         'mup_width': 128,
         'mup_depth': 2,
         'widths': [64, 128, 256, 512, 1024, 2048],
-        'depths': [2, 3, 4, 6, 8] # Loses coherence at 16, 1 breaks probe
+        'depths': [1, 2, 3, 4, 6, 8] # Loses coherence at 16, 1 breaks probe
     },
     # 'linear': {
     #     # Unused
@@ -122,10 +125,17 @@ sweep_params = {
     # },
 }
 
-def artifact_exists(width, depth, net, eraser, out, act):
+def artifact_exists(width, depth, net, eraser, out, act, args):
     artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}.pth"
     or_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth"
-    # breakpoint()
+
+    if args.normalize:
+        artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_n={args.normalize}_{out}.pth"
+        or_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_n={args.normalize}_24-11-19.pth"
+        if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
+            return True
+        return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
+    
     if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
         return True
     return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
@@ -145,14 +155,14 @@ def main():
 
         if args.width:
             for width in widths[args.start:]:
-                if args.overwrite or not artifact_exists(width, mup_depth, args.net, eraser, args.out, args.act):
+                if args.overwrite or not artifact_exists(width, mup_depth, args.net, eraser, args.out, args.act, args):
                     run_training(
                         width, mup_depth, eraser, lr, b1, mup_width, mup_depth, args
                     )
 
         if args.depth:
             for depth in depths[args.start:]:
-                if args.overwrite or not artifact_exists(mup_width, depth, args.net, eraser, args.out, args.act):
+                if args.overwrite or not artifact_exists(mup_width, depth, args.net, eraser, args.out, args.act, args):
                     run_training(
                         mup_width, depth, eraser, lr, b1, mup_width, mup_depth, args
                     )

@@ -191,6 +191,8 @@ class Probe(nn.Module, ABC):
                 logger.log(log_data)
 
             if ckpt_every is not None and i % ckpt_every == 0:
+                if not (Path("probe-ckpts").exists()):
+                    Path("probe-ckpts").mkdir(parents=True)
                 torch.save(self.state_dict(), Path(f"probe-ckpts/{logger.name}-{i}.pth"))
 
         # Load parameters with lowest validation loss
