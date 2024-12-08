@@ -176,18 +176,6 @@ class Probe(nn.Module, ABC):
                     
                 }
 
-                # for layer_name, value in w_frobenius_norms.items():
-                #     log_data[f"layer_norms/{layer_name}/weight_frobenius"] = value
-
-                # for layer_name, value in w_spectral_norms.items():
-                #     log_data[f"layer_norms/{layer_name}/weight_spectral"] = value
-
-                # for layer_name, value in b_l1_norms.items():
-                #     log_data[f"layer_norms/{layer_name}/bias_l1"] = value
-
-                # for layer_name, value in b_frobenius_norms.items():
-                #     log_data[f"layer_norms/{layer_name}/bias_frobenius"] = value
-
                 logger.log(log_data)
 
             if ckpt_every is not None and i % ckpt_every == 0:

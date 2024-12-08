@@ -25,6 +25,56 @@ from mdl.resnet_probe import ResNetProbe
 lt.monkey_patch()
 
 
+def get_mnist():
+    train_dataset: HfDataset = load_dataset("mnist", split='train') # type: ignore
+
+    def map_fn(ex):
+        return {
+            'input_ids': transforms.ToTensor()(ex['image']),
+            'label': ex['label']
+        }
+
+    train_dataset = train_dataset.map(
+        function=map_fn,
+        remove_columns=['image'],
+        new_fingerprint='transformed_mnist', # type: ignore
+        keep_in_memory=True # type: ignore
+    )
+    train_dataset = train_dataset.with_format('torch')
+    train_dataset.set_format(type='torch', columns=['input_ids', 'label'])
+
+    print("Final columns:", train_dataset.column_names)
+
+    # Calculate mean and std of pixel values
+    input_ids = assert_type(Tensor, train_dataset['input_ids'])
+    mean = input_ids.mean().item()
+    std = input_ids.std().item()
+    def normalize(image):
+        transform = transforms.Compose([
+            transforms.Normalize((mean,), (std,))
+        ])
+        return transform(image)
+
+
+    test_dataset: HfDataset = load_dataset('mnist', split='test') # type: ignore
+
+    test_dataset = test_dataset.map(
+        function=map_fn,
+        remove_columns=['image'],
+        new_fingerprint='transformed_mnist', # type: ignore
+        keep_in_memory=True # type: ignore
+    )
+    test_dataset.set_format(type='torch', columns=['input_ids', 'label'])
+
+    test_dataset = test_dataset.map(
+        lambda example: {'input_ids': normalize(example['input_ids'])},
+        new_fingerprint='transformed_mnist'
+    )
+
+    return test_dataset
+
+
+
 def get_cifar10():
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
 
@@ -218,6 +268,7 @@ if __name__ == "__main__":
                 entity="eleutherai",
                 name=wandb_name,
                 config={"eraser": args.eraser, **vars(args)},
+                reinit=True
             ) 
             if not args.debug
             else None
@@ -297,9 +348,14 @@ if __name__ == "__main__":
                 early_stop_epochs=args.early_stop_epochs,
             )
         )
-        wandb.finish()
-
         torch.save(results, seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth")
+
+        try:
+            wandb.finish()
+        except Exception as e:
+            print("Caught exception: ", e)
+            pass
+
 
     data_path = Path(
         f"/mnt/ssd-1/lucia/{args.out}"

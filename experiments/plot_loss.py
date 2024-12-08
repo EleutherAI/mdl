@@ -1,7 +1,9 @@
 from argparse import ArgumentParser
 from pathlib import Path
+from typing import Any
 
 import wandb
+from wandb.apis.public import Run
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -25,30 +27,37 @@ DISPLAY_NAMES = {
     "swiglu": "SwiGLU",
 }
 
-def parse_run_params(parts: list[str]) -> dict | None:
+def parse_run_params(run: Run) -> dict | None:
     """Parse run name parts into parameters."""
+    
+    parts: list[str] = run.name.split(' ')
+    
     try:
-        act_str = "act=relu"
-        if len(parts) == 8:
-            eraser, _, width_str, depth_str, seed_str, net, lr_str, b1_str = parts
-        elif len(parts) == 9:
-            eraser, _, width_str, depth_str, seed_str, net, lr_str, b1_str, act_str = parts
-        else:
-            return None
+        eraser, _, width_str, depth_str, seed_str, net = parts[:6]
+        
+        remaining_params = parts[6:] # unfortunately the order of these varies
+        
+        param_dict: dict[str, Any] = {
+            'act': DISPLAY_NAMES['relu']
+        }
+        for param in remaining_params:
+            if param.startswith('b1='):
+                param_dict['b1'] = float(param.split('=')[1])
+            elif param.startswith('lr='):
+                param_dict['lr'] = float(param.split('=')[1])
+            elif param.startswith('act='):
+                param_dict['act'] = DISPLAY_NAMES[param.split('=')[1]]
             
-        print(act_str)
-        return {
+        param_dict.update({
             'net_id': net,
             'seed': int(seed_str.split('=')[1]),
             'width': int(width_str.split('=')[1]),
             'depth': int(depth_str.split('=')[1]),
-            'lr': float(lr_str.split('=')[1]),
-            'b1': float(b1_str.split('=')[1]),
-            'act': DISPLAY_NAMES[act_str.split('=')[1]],
             'eraser': DISPLAY_NAMES[eraser],
-            'net': DISPLAY_NAMES[net]
-            
-        }
+            'net': DISPLAY_NAMES[net],
+            # 'date': run.created_at
+        })
+        return param_dict
     except:
         return None
 
@@ -56,17 +65,27 @@ def scrape_data(filename: Path):
     api = wandb.Api()
     runs = api.runs("eleutherai/mdl")
 
-    data = []
+    latest_runs = {}
     for run in runs:
         if '24-11-21' not in run.name and '24-11-19' not in run.name:
             continue
 
-        print(f"Processing run: {run.name}")
+        params = parse_run_params(run)
+        if not params:
+            continue
+        
+        param_key = tuple(sorted(params.items()))
+
+        if param_key not in latest_runs or run.created_at > latest_runs[param_key].created_at:
+            latest_runs[param_key] = run
+
+    data = []
+    for param_key, run in latest_runs.items():
         try:
-            parts = run.name.split(' ')
-            params = parse_run_params(parts)
-            if not params:
-                continue
+            params = dict(param_key)
+            # params = parse_run_params(run)
+            # if not params:
+            #     continue
 
             history = list(run.scan_history())
             if not history:
@@ -95,7 +114,6 @@ def scrape_data(filename: Path):
 
     pd.DataFrame(data).to_csv(filename, index=False)
     print(f"Saved loss curve to {filename}")
-
 
 def plot_data(df: pd.DataFrame, out: Path):
     """Create plots for each network and eraser type with a line for each activation function.
@@ -133,7 +151,7 @@ def plot_data(df: pd.DataFrame, out: Path):
         )
         fig.update_layout(
             title=f"Loss over 5 seeds ({net})",
-            height=300 * len(width_depth_pairs),
+            height=280 * len(width_depth_pairs),
             width=1200,
             showlegend=False,
         )

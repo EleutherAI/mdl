@@ -42,7 +42,7 @@ class SwiGLU(torch.nn.Module):
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}"
-    
+
 
 class MlpProbe(Probe):
     def __init__(

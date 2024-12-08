@@ -125,7 +125,6 @@ sweep_params = {
 def artifact_exists(width, depth, net, eraser, out, act):
     artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}.pth"
     or_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth"
-    # breakpoint()
     if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
         return True
     return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
