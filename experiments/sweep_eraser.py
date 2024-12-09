@@ -105,16 +105,18 @@ sweep_params = {
             'control': 5e-4,
             'leace': 5e-4,
             'qleace': 5e-4,
+            'qleace2': 5e-4, # guessing
         },
         'b1': {
             'control': 0.99,
             'leace': 0.95,
             'qleace': 0.95,
+            'qleace2': 0.95, # guessing
         },
         'mup_width': 128,
         'mup_depth': 2,
         'widths': [64, 128, 256, 512, 1024, 2048],
-        'depths': [1, 2, 3, 4, 6, 8] # Loses coherence at 16, 1 breaks probe
+        'depths': [1, 2, 3, 4, 6, 8] # #  Loses coherence at 16, 1 breaks probe
     },
     # 'linear': {
     #     # Unused
