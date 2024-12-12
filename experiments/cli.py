@@ -1,8 +1,9 @@
 from argparse import ArgumentParser
 from pathlib import Path
 from functools import partial
-
 from typing import Any
+
+from datasets import load_dataset
 import wandb
 import torch
 import torch.nn.functional as F
@@ -75,6 +76,44 @@ def get_mnist():
 
 
 
+def get_cifarnet(device="cpu"):
+    nontest = load_dataset("EleutherAI/cifarnet", split='train') # type: ignore
+    def map_fn(ex):
+        return {
+            'input_ids': transforms.ToTensor()(ex['img']),
+            'label': ex['label']
+        }
+
+    nontest: HfDataset = nontest.map(function=map_fn) # type: ignore
+    nontest.set_format(type='torch', columns=['input_ids', 'label'])
+
+    X: Tensor = nontest['input_ids'].to(device) # type: ignore
+    Y: Tensor = nontest['label'].to(device) # type: ignore
+
+    # Shuffle deterministically
+    rng = torch.Generator(device=X.device).manual_seed(42)
+    perm = torch.randperm(len(X), generator=rng, device=X.device)
+    X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    # Test set is entirely separate
+    test = load_dataset("EleutherAI/cifarnet", split='test') # type: ignore
+    test = test.map(map_fn)
+    test.set_format(type='torch', columns=['input_ids', 'label'])
+
+    X_test: Tensor = test['input_ids'].to(device) # type: ignore
+    Y_test: Tensor = test['label'].to(device) # type: ignore
+
+    return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
+
+
 def get_cifar10(normalize: bool = False):
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
 
@@ -120,8 +159,9 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--num_seeds", type=int, default=5)
     parser.add_argument("--max_epochs", type=int, default=30_000)
-    parser.add_argument("--early_stop_epochs", type=int, default=100)
+    parser.add_argument("--early_stop_epochs", type=int, default=30_000)
     parser.add_argument("--schedulefree", action="store_true")
+    parser.add_argument("--dataset", type=str, choices=("cifar10", "mnist", "cifarnet"), default="cifar10")
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nocache", action="store_true")
@@ -130,7 +170,14 @@ if __name__ == "__main__":
     parser.add_argument("--trial", action="store_true", help="Run a single trial with all data")
     args = parser.parse_args()
 
-    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(normalize=args.normalize)
+    if args.dataset == "cifar10":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(normalize=args.normalize)
+    elif args.dataset == "mnist":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_mnist()
+    elif args.dataset == "cifarnet":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifarnet()
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
