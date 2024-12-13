@@ -98,6 +98,10 @@ sweep_params = {
     #     'depths': [2, 4, 8] #  16
     # },
     'resmlp': {
+        'mup_width': 128,
+        'mup_depth': 2,
+        'widths': [128, 256, 512, 1024],
+        'depths': [2, 4, 8],
         'lr': {
             'control': 5e-4,
             'leace': 5e-4,
@@ -110,10 +114,6 @@ sweep_params = {
             'qleace': 0.95,
             'qleace2': 0.95, # guessing
         },
-        'mup_width': 128,
-        'mup_depth': 2,
-        'widths': [128, 256, 512, 1024],
-        'depths': [2, 4, 8]
     },
     'mlp': {
         'lr': {
@@ -144,7 +144,10 @@ sweep_params = {
 
 def artifact_exists(width, depth, net, eraser, out, act, args):
     artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}.pth"
-    or_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth"
+    or_names = [
+        f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth",
+        f"{net}_{act}_h={width}_d={depth}_{eraser}_results.pth",
+    ]
 
     if args.normalize:
         artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_n={args.normalize}_{out}.pth"
@@ -153,8 +156,9 @@ def artifact_exists(width, depth, net, eraser, out, act, args):
             return True
         return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
     
-    if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
-        return True
+    for or_name in or_names:
+        if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
+            return True
     return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
 
 

@@ -19,6 +19,7 @@ DISPLAY_NAMES = {
     "mlp": "MLP",
     "convnext": "ConvNeXt",
     "swin": "Swin",
+    "resmlp": "ResMLP",
     # erasers
     "leace": "LEACE",
     "qleace": "QLEACE",
