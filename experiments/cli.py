@@ -367,7 +367,7 @@ if __name__ == "__main__":
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f:} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} es={args.early_stop_epochs}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} es={args.early_stop_epochs}'
 
         run = (
             wandb.init(
