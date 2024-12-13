@@ -85,7 +85,7 @@ class Sweep:
         **fit_kwargs,
     ) -> MdlResult:
         N, d = len(x), self.num_features
-        rng = torch.Generator(device=self.device).manual_seed(seed)
+        rng = torch.Generator(device=x.device).manual_seed(seed)
 
         val_size = min(2048, round(N * self.val_frac))
         nonval_size = N - val_size
@@ -108,7 +108,7 @@ class Sweep:
 
         for chunk_idx, (n, next_n) in enumerate(pbar):
             # Shuffle data
-            indices = torch.randperm(len(x), device=self.device, generator=rng)
+            indices = torch.randperm(len(x), device=x.device, generator=rng)
             x, y = x[indices], y[indices]
 
             nonval_x, val_x = x.split([nonval_size, val_size])
@@ -126,10 +126,10 @@ class Sweep:
                 **self.probe_kwargs,
             )
             probe.fit(
-                train_x[:n],
-                train_y[:n],
-                x_val=val_x,
-                y_val=val_y,
+                train_x[:n].to(self.device),
+                train_y[:n].to(self.device),
+                x_val=val_x.to(self.device),
+                y_val=val_y.to(self.device),
                 verbose=False,
                 transform=transform,
                 logger=self.logger if chunk_idx == len(pbar) - 1 else None,
@@ -140,7 +140,7 @@ class Sweep:
 
             # Compute test loss and add to scaling curve
             test_loss = probe.evaluate(
-                transform(test_x, test_y), test_y, self.batch_size
+                transform(test_x, test_y).to(self.device), test_y.to(self.device), self.batch_size
             )
             curve.append(float(test_loss))
             pbar.set_postfix(loss=f"{test_loss:.4f}")

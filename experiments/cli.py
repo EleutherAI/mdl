@@ -1,8 +1,9 @@
 from argparse import ArgumentParser
 from pathlib import Path
 from functools import partial
-
 from typing import Any
+
+from datasets import load_dataset
 import wandb
 import torch
 import torch.nn.functional as F
@@ -75,7 +76,45 @@ def get_mnist():
 
 
 
-def get_cifar10(device):
+def get_cifarnet(device="cpu"):
+    nontest = load_dataset("EleutherAI/cifarnet", split='train') # type: ignore
+    def map_fn(ex):
+        return {
+            'input_ids': transforms.ToTensor()(ex['img']),
+            'label': ex['label']
+        }
+
+    nontest: HfDataset = nontest.map(function=map_fn) # type: ignore
+    nontest.set_format(type='torch', columns=['input_ids', 'label'])
+
+    X: Tensor = nontest['input_ids'].to(device) # type: ignore
+    Y: Tensor = nontest['label'].to(device) # type: ignore
+
+    # Shuffle deterministically
+    rng = torch.Generator(device=X.device).manual_seed(42)
+    perm = torch.randperm(len(X), generator=rng, device=X.device)
+    X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    # Test set is entirely separate
+    test = load_dataset("EleutherAI/cifarnet", split='test') # type: ignore
+    test = test.map(map_fn)
+    test.set_format(type='torch', columns=['input_ids', 'label'])
+
+    X_test: Tensor = test['input_ids'].to(device) # type: ignore
+    Y_test: Tensor = test['label'].to(device) # type: ignore
+
+    return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
+
+
+def get_cifar10(normalize: bool = False):
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
 
     images, labels = zip(*nontest)
@@ -122,7 +161,9 @@ if __name__ == "__main__":
     parser.add_argument("--max_epochs", type=int, default=30_000)
     parser.add_argument("--early_stop_epochs", type=int, default=100)
     parser.add_argument("--schedulefree", action="store_true")
+    parser.add_argument("--dataset", type=str, choices=("cifar10", "mnist", "cifarnet"), default="cifar10")
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
+    parser.add_argument("--muon", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--save", action="store_true")
@@ -131,11 +172,43 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(device)
+    if args.dataset == "cifar10":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(normalize=args.normalize)
+    elif args.dataset == "mnist":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_mnist()
+    elif args.dataset == "cifarnet":
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifarnet()
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
+    def normalize(X, X_train, X_val, X_test):
+        X_flat = X.reshape(X.shape[0], -1)
+        
+        mean = X_flat.mean(dim=0, keepdim=True)
+        X_centered = X_flat - mean
+        
+        cov = (X_centered.T @ X_centered) / (X_centered.shape[0] - 1)
+        
+        scaling = torch.sqrt(torch.diagonal(cov))
+        scaling = torch.where(scaling > 0, scaling, torch.ones_like(scaling))
+        
+        def normalize_data(data: Tensor) -> Tensor:
+            data_flat = data.reshape(data.shape[0], -1)
+            data_centered = data_flat - mean
+            data_normalized = data_centered / scaling
+            return data_normalized.reshape(data.shape)
+        
+        X = normalize_data(X)
+        X_train = normalize_data(X_train)
+        X_val = normalize_data(X_val)
+        X_test = normalize_data(X_test)
+
+        return X, X_train, X_val, X_test
+
     # Populate eraser cache using training data
-    state_path = Path("erasers_cache") / f"cifar10_state_2.pth"
+    state_path = Path("erasers_cache") / f"{args.dataset}_state_2.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
@@ -257,6 +330,11 @@ if __name__ == "__main__":
     if args.normalize:
         X, X_train, X_val, X_test = normalize(X, X_train, X_val, X_test)
 
+
+    # TODO Lucia normalize eraserd data - currently only supports control run
+    if args.normalize:
+        X, X_train, X_val, X_test = normalize(X, X_train, X_val, X_test)
+
     base_model = model_cls(
         num_classes=k,
         num_features=num_features,
@@ -289,7 +367,7 @@ if __name__ == "__main__":
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f:} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} es={args.early_stop_epochs}'
 
         run = (
             wandb.init(
@@ -316,6 +394,9 @@ if __name__ == "__main__":
                 base_shapes_path=base_shapes_path,
                 dtype=torch.float32,
             )
+            if args.muon:
+                probe_kwargs['muon'] = True
+
             if model_cls == MlpProbe:
                 probe_kwargs['activation'] = args.act
 
@@ -349,6 +430,8 @@ if __name__ == "__main__":
             betas=(args.b1, 0.999),
             base_shapes_path=base_shapes_path,
         )
+        if args.muon:
+                probe_kwargs['muon'] = True
         if model_cls == MlpProbe:
             probe_kwargs['activation'] = args.act
 
@@ -356,7 +439,7 @@ if __name__ == "__main__":
         sweep = Sweep(
             num_features,
             k,
-            device=X.device,
+            device=device,
             dtype=torch.float32,
             num_chunks=10,
             logger=run,

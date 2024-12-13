@@ -14,6 +14,7 @@ from experiments.cli import get_cifar10
 
 lt.monkey_patch()
 
+lt.monkey_patch()
 
 class QuadraticModel:
     def __init__(self, alpha: Tensor, beta: Tensor, gamma: Tensor, d: int):

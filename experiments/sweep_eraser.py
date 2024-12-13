@@ -19,7 +19,8 @@ def run_training(
         "--schedulefree",
         "--mup_width", f"{mup_width}",
         "--mup_depth", f"{mup_depth}",
-        "--act", f"{args.act}"
+        "--act", f"{args.act}",
+        "--dataset", f"{args.dataset}",
     ]
     if args.normalize:
         cmd.append("--normalize")
@@ -50,6 +51,7 @@ def parse_args():
     parser.add_argument("--depth", action="store_true")
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10"), default="cifar10")
     parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace"])
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     return parser.parse_args()
@@ -95,11 +97,24 @@ sweep_params = {
     #     'widths': [2, 4, 8], # num channels doubled after each layer
     #     'depths': [2, 4, 8] #  16
     # },
-    # 'resmlp': {
-    #     'mup_width': 128,
-    #     'widths': [128, 256, 512, 1024],
-    #     'depths': [2, 4, 8]
-    # },
+    'resmlp': {
+        'lr': {
+            'control': 5e-4,
+            'leace': 5e-4,
+            'qleace': 5e-4,
+            'qleace2': 5e-4, # guessing
+        },
+        'b1': {
+            'control': 0.99,
+            'leace': 0.95,
+            'qleace': 0.95,
+            'qleace2': 0.95, # guessing
+        },
+        'mup_width': 128,
+        'mup_depth': 2,
+        'widths': [128, 256, 512, 1024],
+        'depths': [2, 4, 8]
+    },
     'mlp': {
         'lr': {
             'control': 5e-4,

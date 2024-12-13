@@ -7,7 +7,7 @@ import numpy as np
 
 import torch
 from torch import Tensor, nn, optim
-from schedulefree import AdamWScheduleFree
+from schedulefree import AdamWScheduleFree, ScheduleFreeWrapper
 from torch.nn.functional import (
     binary_cross_entropy_with_logits as bce_loss,
 )
@@ -110,7 +110,7 @@ class Probe(nn.Module, ABC):
         self.eval()
         # Check for possible bug when using AdamWScheduleFree with MuAdam (MuAdam should)
         # return AdamWScheduleFree such that this call works but...)
-        if isinstance(opt, AdamWScheduleFree):
+        if isinstance(opt, AdamWScheduleFree) or isinstance(opt, ScheduleFreeWrapper):
             opt.eval()
         x_val = transform(x_val, y_val)
 
@@ -142,7 +142,7 @@ class Probe(nn.Module, ABC):
 
             ### TRAIN LOOP ###
             self.train()
-            if isinstance(opt, AdamWScheduleFree):
+            if isinstance(opt, AdamWScheduleFree) or isinstance(opt, ScheduleFreeWrapper):
                 opt.train()
             train_losses = []
 
