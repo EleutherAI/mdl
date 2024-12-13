@@ -159,10 +159,11 @@ if __name__ == "__main__":
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--num_seeds", type=int, default=5)
     parser.add_argument("--max_epochs", type=int, default=30_000)
-    parser.add_argument("--early_stop_epochs", type=int, default=30_000)
+    parser.add_argument("--early_stop_epochs", type=int, default=100)
     parser.add_argument("--schedulefree", action="store_true")
     parser.add_argument("--dataset", type=str, choices=("cifar10", "mnist", "cifarnet"), default="cifar10")
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
+    parser.add_argument("--muon", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--save", action="store_true")
@@ -180,11 +181,6 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
-
-    # Populate eraser cache using training data
-    state_path = Path("erasers_cache") / f"cifar10_state_2.pth"
-    state_path.parent.mkdir(exist_ok=True)
-    state = {} if not state_path.exists() else torch.load(state_path)
 
     def normalize(X, X_train, X_val, X_test):
         X_flat = X.reshape(X.shape[0], -1)
@@ -209,6 +205,11 @@ if __name__ == "__main__":
         X_test = normalize_data(X_test)
 
         return X, X_train, X_val, X_test
+
+    # Populate eraser cache using training data
+    state_path = Path("erasers_cache") / f"{args.dataset}_state_2.pth"
+    state_path.parent.mkdir(exist_ok=True)
+    state = {} if not state_path.exists() else torch.load(state_path)
 
     if args.eraser != "control" and (args.eraser not in state or args.nocache):
         cls = {
@@ -363,6 +364,9 @@ if __name__ == "__main__":
                 base_shapes_path=base_shapes_path,
                 dtype=torch.float32,
             )
+            if args.muon:
+                probe_kwargs['muon'] = True
+
             if model_cls == MlpProbe:
                 probe_kwargs['activation'] = args.act
 
@@ -396,6 +400,8 @@ if __name__ == "__main__":
             betas=(args.b1, 0.999),
             base_shapes_path=base_shapes_path,
         )
+        if args.muon:
+                probe_kwargs['muon'] = True
         if model_cls == MlpProbe:
             probe_kwargs['activation'] = args.act
 
@@ -403,7 +409,7 @@ if __name__ == "__main__":
         sweep = Sweep(
             num_features,
             k,
-            device=X.device,
+            device=device,
             dtype=torch.float32,
             num_chunks=10,
             logger=run,

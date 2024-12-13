@@ -3,8 +3,9 @@ from functools import partial
 
 import torch
 from torch import Tensor, nn, optim
-from schedulefree import AdamWScheduleFree
+from schedulefree import AdamWScheduleFree, ScheduleFreeWrapper
 from mup import MuReadout, MuAdam, MuSGD, load_base_shapes, set_base_shapes
+from muon import Muon
 
 from .probe import Probe
 
@@ -37,7 +38,7 @@ class SwiGLU(torch.nn.Module):
 
     def forward(self, input: Tensor) -> Tensor:
         x, y = torch.chunk(input, 2, dim=self.dim)
-        
+
         return x * torch.sigmoid(y)
 
     def extra_repr(self) -> str:
@@ -59,6 +60,7 @@ class MlpProbe(Probe):
         activation: str = "relu",
         schedule_free: bool = False,
         base_shapes_path: str | None = None,
+        muon=False,
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
@@ -66,6 +68,7 @@ class MlpProbe(Probe):
         self.schedule_free = schedule_free
         self.betas = betas
         self.mup = base_shapes_path is not None
+        self.muon = muon
 
         act = {
             "relu": nn.ReLU(),
@@ -75,14 +78,16 @@ class MlpProbe(Probe):
 
         assert hidden_size is not None
         k, h = num_classes, hidden_size
-        
+
         in_features, out_features = h, h
 
         # Reduce h by a factor of 2/3 to keep the number of parameters constant
         if activation == "swiglu":
             swiglu_h = h * 2 // 3
-            in_features = swiglu_h # Swiglu output is one vector of len (h * 2 // 3)
-            out_features = swiglu_h * 2 # Swiglu input is equivalent to two concatenated vectors of len (h * 2 // 3)
+            in_features = swiglu_h  # Swiglu output is one vector of len (h * 2 // 3)
+            out_features = (
+                swiglu_h * 2
+            )  # Swiglu input is equivalent to two concatenated vectors of len (h * 2 // 3)
 
         self.net = nn.Sequential(
             nn.Linear(num_features, out_features, device=device, dtype=dtype),
@@ -94,7 +99,9 @@ class MlpProbe(Probe):
                 )
                 for _ in range(num_layers - 1)
             ],
-            MuReadout(in_features, k, device=device, dtype=dtype, readout_zero_init=True),
+            MuReadout(
+                in_features, k, device=device, dtype=dtype, readout_zero_init=True
+            ),
         )
 
         # Configure MuP
@@ -103,9 +110,28 @@ class MlpProbe(Probe):
             set_base_shapes(self, base_shapes)
 
     def build_optimizer(self):
+        if self.muon:
+            print("Not using MuP - not implemented for muon")
+            muon_params = [p for p in self.net.parameters() if p.ndim >= 2]
+            adamw_params = [p for p in self.net.parameters() if p.ndim < 2]
+
+            optimizer = Muon(
+                muon_params, 
+                lr=0.02, 
+                momentum=0.95, 
+                adamw_params=adamw_params, 
+                adamw_lr=self.learning_rate, 
+                adamw_betas=self.betas, 
+                adamw_wd=0.01 # type: ignore
+            )
+            return ScheduleFreeWrapper(optimizer)
+        else:
+            opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
         opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
         if self.mup:
-            return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+            return MuAdam(
+                self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas
+            )
         return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -151,7 +177,9 @@ class ResMlpProbe(Probe):
             ]
         )
 
-        self.fc = MuReadout(hidden_size, output_dim, device=device, dtype=dtype, readout_zero_init=True)
+        self.fc = MuReadout(
+            hidden_size, output_dim, device=device, dtype=dtype, readout_zero_init=True
+        )
 
         # Configure MuP
         if base_shapes_path:
@@ -166,7 +194,9 @@ class ResMlpProbe(Probe):
         if self.num_layers > 1:
             opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
             if self.mup:
-                return MuAdam(self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas)
+                return MuAdam(
+                    self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas
+                )
             return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
         else:
             # Use Nesterov SGD for linear probes. The problem is convex and there's
@@ -184,7 +214,6 @@ class ResMlpProbe(Probe):
                 # Use same weight decay as AdamW above
                 weight_decay=0.01,
             )
-
 
 
 LinearProbe = partial(MlpProbe, num_layers=1)
