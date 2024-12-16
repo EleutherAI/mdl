@@ -11,21 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from experiments.sweep_eraser import sweep_params
+from experiments.plot_mdl import DISPLAY_NAMES
 
-DISPLAY_NAMES = {
-    # nets
-    "mlp": "MLP",
-    "convnext": "ConvNeXt",
-    "swin": "Swin",
-    # erasers
-    "leace": "LEACE",
-    "qleace": "QLEACE",
-    "control": "Control",
-    # activation functions
-    "relu": "ReLU",
-    "gelu": "GELU",
-    "swiglu": "SwiGLU",
-}
 
 def parse_run_params(run: Run) -> dict | None:
     """Parse run name parts into parameters."""

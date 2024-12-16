@@ -24,6 +24,7 @@ DISPLAY_NAMES = {
     "leace": "LEACE",
     "qleace": "QLEACE",
     "control": "Control",
+    "qleace2": "ALF-QLEACE",
     # activation functions
     "relu": "ReLU",
     "gelu": "GELU",
@@ -74,11 +75,11 @@ def create_plots(df: pd.DataFrame, output_dir: Path):
     """Create plots for each network and eraser type with a line for each activation function.
     Seed data is plotted as markers and mean data as lines."""
 
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok=True, parents=True)
 
     colors = px.colors.qualitative.Set1
 
-    ordered_erasers = ["Control", "LEACE", "QLEACE"]
+    ordered_erasers = ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]
 
     df = df.sort_values(["depth", "width"])
 
