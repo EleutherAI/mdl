@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Any
+import json
 
 import wandb
 from wandb.apis.public import Run
@@ -48,18 +49,45 @@ def parse_run_params(run: Run) -> dict | None:
     except:
         return None
 
-def scrape_data(filename: Path):
+def parse_dataset(run: Run) -> str:
+    """Parse dataset from run name."""
+    try:
+        with run.file('wandb-metadata.json').download(replace=True) as f:
+            metadata = json.load(f)
+        args = metadata['args']
+    except:
+        print(list(run.files()))
+        return ''
+    if not args:
+        return ''
+
+    if '24-11-21' not in run.name and '24-11-19' not in run.name:
+        print(str(args))
+    
+    return 'cifarnet' if 'cifarnet' in str(args) else 'cifar10'
+
+
+def scrape_data(filename: Path, dataset_str: str):
     api = wandb.Api()
     runs = api.runs("eleutherai/mdl")
 
     latest_runs = {}
     for run in runs:
         if '24-11-21' not in run.name and '24-11-19' not in run.name:
+            if dataset_str == 'cifarnet' or 'resmlp' in run.name:
+                if not 'result' in run.name and not 'cifarnet' in run.name:
+                    continue
+            else:
+                continue
+        dataset = parse_dataset(run)
+        if dataset != dataset_str:
             continue
 
         params = parse_run_params(run)
         if not params:
             continue
+        
+        params['dataset'] = dataset_str
         
         param_key = tuple(sorted(params.items()))
 
@@ -252,7 +280,7 @@ if __name__ == '__main__':
     args = parse_args()
     data, out = Path(args.data), Path(args.out)
 
-    # scrape_data(data)
+    scrape_data(data, args.dataset)
 
     df = pd.read_csv(data)
 

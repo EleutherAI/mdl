@@ -10,6 +10,7 @@ import numpy as np
 
 from experiments.sweep_eraser import sweep_params
 
+
 import plotly.io as pio
 
 pio.kaleido.scope.mathjax = None  # https://github.com/plotly/plotly.py/issues/3469
@@ -23,6 +24,7 @@ DISPLAY_NAMES = {
     # erasers
     "leace": "LEACE",
     "qleace": "QLEACE",
+    "qleace2": "ALF-QLEACE",
     "control": "Control",
     "qleace2": "ALF-QLEACE",
     # activation functions
@@ -71,7 +73,7 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def create_plots(df: pd.DataFrame, output_dir: Path):
+def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
     """Create plots for each network and eraser type with a line for each activation function.
     Seed data is plotted as markers and mean data as lines."""
 
@@ -225,7 +227,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path):
                         ),
                     )
 
-        fig.write_image(output_dir / f"{net}_MDL.pdf", format="pdf")
+        fig.write_image(output_dir / f"{net}_MDL_{dataset}.pdf", format="pdf")
 
 
 def parse_args():
@@ -235,6 +237,12 @@ def parse_args():
         type=Path,
         default=Path("/mnt/ssd-1/lucia/24-11-21"),
         help="Path to the directory containing .pth files.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="cifar10",
+        help="Dataset to use for the plots.",
     )
     parser.add_argument(
         "--out",
@@ -247,11 +255,15 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if args.dataset == "cifar10":
+        print("Prevent user error; dataset awkwardly not in results metadata")
+        assert "cifarnet" not in args.data.name
+
     print("Loading disk data into dataframe...")
     df = load_sweep_data(args.data)
 
     print("Creating plots...")
-    create_plots(df, args.out)
+    create_plots(df, args.out, args.dataset)
 
 
 if __name__ == "__main__":
