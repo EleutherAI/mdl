@@ -140,7 +140,7 @@ class Sweep:
 
             # Compute test loss and add to scaling curve
             test_loss = probe.evaluate(
-                transform(test_x, test_y).to(self.device), test_y.to(self.device), self.batch_size
+                transform(test_x.to(self.device), test_y.to(self.device)), test_y.to(self.device), self.batch_size
             )
             curve.append(float(test_loss))
             pbar.set_postfix(loss=f"{test_loss:.4f}")

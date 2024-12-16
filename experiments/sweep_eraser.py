@@ -24,6 +24,8 @@ def run_training(
     ]
     if args.normalize:
         cmd.append("--normalize")
+    if args.nocache:
+        cmd.append("--nocache")
     print(f"\nLaunching training...")
     print("Command:", " ".join(cmd))
     
@@ -51,8 +53,9 @@ def parse_args():
     parser.add_argument("--depth", action="store_true")
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10"), default="cifar10")
-    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace"])
+    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "qleace2"])
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     return parser.parse_args()
 
@@ -146,7 +149,7 @@ def artifact_exists(width, depth, net, eraser, out, act, args):
     artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}.pth"
     or_names = [
         f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth",
-        f"{net}_{act}_h={width}_d={depth}_{eraser}_results.pth",
+        # f"{net}_{act}_h={width}_d={depth}_{eraser}_results.pth",
     ]
 
     if args.normalize:

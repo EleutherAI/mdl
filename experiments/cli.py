@@ -212,30 +212,6 @@ if __name__ == "__main__":
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
-    def normalize(X, X_train, X_val, X_test):
-        X_flat = X.reshape(X.shape[0], -1)
-        
-        mean = X_flat.mean(dim=0, keepdim=True)
-        X_centered = X_flat - mean
-        
-        cov = (X_centered.T @ X_centered) / (X_centered.shape[0] - 1)
-        
-        scaling = torch.sqrt(torch.diagonal(cov))
-        scaling = torch.where(scaling > 0, scaling, torch.ones_like(scaling))
-        
-        def normalize_data(data: Tensor) -> Tensor:
-            data_flat = data.reshape(data.shape[0], -1)
-            data_centered = data_flat - mean
-            data_normalized = data_centered / scaling
-            return data_normalized.reshape(data.shape)
-        
-        X = normalize_data(X)
-        X_train = normalize_data(X_train)
-        X_val = normalize_data(X_val)
-        X_test = normalize_data(X_test)
-
-        return X, X_train, X_val, X_test
-
     if args.eraser != "control" and (args.eraser not in state or args.nocache):
         cls = {
             "leace": LeaceFitter,
@@ -243,15 +219,24 @@ if __name__ == "__main__":
             "qleace2": AlfQLeaceFitter,
         }[args.eraser]
 
+        dtype = torch.bfloat16 if args.dataset == "cifarnet" else torch.float32
+        if args.eraser == "qleace2":
+            dtype = torch.float32
+
         fitter = cls(
-            num_features, k, dtype=torch.float32, device=device, shrinkage=True
+            num_features, k, dtype=dtype, device=device, shrinkage=True
         )
+
         for x, y in tqdm(zip(X_train, Y_train)):
             y = torch.as_tensor(y).view(1)
             if args.eraser != "qleace":
                 y = F.one_hot(y, k)
 
-            fitter.update(x.view(1, -1).to(device), y.to(device))
+            fitter.update(x.view(1, -1).to(device).to(dtype), y.to(device))
+
+        if args.dataset == "cifarnet":
+            fitter = fitter.to("cpu")
+        eraser = fitter.eraser
 
         state[args.eraser] = fitter.eraser
         torch.save(state, state_path)
@@ -309,7 +294,6 @@ if __name__ == "__main__":
             return x
 
     if args.eraser == "leace" or args.eraser == "qleace2":
-
         def erase(x: Tensor, y: Tensor, eraser):
             x_erased = eraser(x.flatten(1))
             return x_erased if flatten[args.net] else x_erased.reshape_as(x)
@@ -325,11 +309,6 @@ if __name__ == "__main__":
         if args.eraser != "control"
         else none_transform
     )
-
-    # TODO Lucia normalize eraserd data - currently only supports control run
-    if args.normalize:
-        X, X_train, X_val, X_test = normalize(X, X_train, X_val, X_test)
-
 
     # TODO Lucia normalize eraserd data - currently only supports control run
     if args.normalize:
@@ -367,7 +346,11 @@ if __name__ == "__main__":
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} es={args.early_stop_epochs}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
+
+        if seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth".exists():
+            results.append(torch.load(seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth"))
+            continue
 
         run = (
             wandb.init(
