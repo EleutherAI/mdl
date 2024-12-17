@@ -69,11 +69,13 @@ sweep_params = {
             'control': 5e-5,
             'leace': 1e-4,
             'qleace': 1e-3,
+            'qleace2': 1e-3,
         },
         'b1': {
             'control': 0.9,
             'leace': 0.9,
             'qleace': 0.9,
+            'qleace2': 0.9,
         },
         # Width specifies the first stage; at each additional stage the width is doubled
         'mup_width': 40,
@@ -86,11 +88,13 @@ sweep_params = {
             'control': 1e-3,
             'leace': 1e-3,
             'qleace': 1e-3,
+            'qleace2': 1e-3,
         },
         'b1': {
             'control': 0.9,
             'leace': 0.9,
             'qleace': 0.9,
+            'qleace2': 0.9,
         },
         'mup_width': 32,
         'mup_depth': 2,
