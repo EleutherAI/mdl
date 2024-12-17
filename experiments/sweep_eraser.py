@@ -26,6 +26,9 @@ def run_training(
         cmd.append("--normalize")
     if args.nocache:
         cmd.append("--nocache")
+    if args.overwrite:
+        cmd.append("--overwrite")
+        
     print(f"\nLaunching training...")
     print("Command:", " ".join(cmd))
     

@@ -168,6 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--normalize", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--trial", action="store_true", help="Run a single trial with all data")
     args = parser.parse_args()
 
@@ -240,6 +241,9 @@ if __name__ == "__main__":
 
         state[args.eraser] = fitter.eraser
         torch.save(state, state_path)
+    
+    # images = state[args.eraser](X_train[:5].flatten(1)).reshape_as(X_train[:5])
+    # import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
 
     model_cls = {
         "mlp": MlpProbe,
@@ -348,7 +352,7 @@ if __name__ == "__main__":
     for seed in range(args.num_seeds):
         wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
 
-        if seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth".exists():
+        if not args.overwrite and (seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth").exists():
             results.append(torch.load(seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth"))
             continue
 

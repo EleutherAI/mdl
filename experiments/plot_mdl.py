@@ -80,7 +80,8 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
     colors = px.colors.qualitative.Set1
 
-    ordered_erasers = ["Control", "LEACE", "QLEACE"]
+    ordered_erasers = ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]
+    ordered_erasers = [eraser for eraser in ordered_erasers if eraser in df["eraser"].unique()]
 
     df = df.sort_values(["depth", "width"])
 
@@ -149,6 +150,8 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
                 data = df[
                     (df["eraser"] == eraser) & (df["act"] == act) & (df["net"] == net)
                 ]
+                if data.empty:
+                    continue
                 mean_data = (
                     data.groupby(["width", "depth"])["mdl"]
                     .agg(["mean", "std"])

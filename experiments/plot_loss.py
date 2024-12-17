@@ -12,22 +12,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from experiments.sweep_eraser import sweep_params
+from experiments.plot_mdl import DISPLAY_NAMES
 
-DISPLAY_NAMES = {
-    # nets
-    "mlp": "MLP",
-    "convnext": "ConvNeXt",
-    "swin": "Swin",
-    "resmlp": "ResMLP",
-    # erasers
-    "leace": "LEACE",
-    "qleace": "QLEACE",
-    "control": "Control",
-    # activation functions
-    "relu": "ReLU",
-    "gelu": "GELU",
-    "swiglu": "SwiGLU",
-}
 
 def parse_run_params(run: Run) -> dict | None:
     """Parse run name parts into parameters."""
@@ -81,18 +67,21 @@ def parse_dataset(run: Run) -> str:
     return 'cifarnet' if 'cifarnet' in str(args) else 'cifar10'
 
 
-def scrape_data(filename: Path, dataset_str: str):
+def scrape_data(filename: Path, dataset_str: str, tag: str):
     api = wandb.Api()
     runs = api.runs("eleutherai/mdl")
 
     latest_runs = {}
     for run in runs:
-        if '24-11-21' not in run.name and '24-11-19' not in run.name:
-            if dataset_str == 'cifarnet' or 'resmlp' in run.name:
-                if not 'result' in run.name and not 'cifarnet' in run.name:
+        if tag and tag not in run.name:
+            continue
+        if not tag:
+            if '24-11-21' not in run.name and '24-11-19' not in run.name:
+                if dataset_str == 'cifarnet' or 'resmlp' in run.name:
+                    if not 'result' in run.name and not 'cifarnet' in run.name:
+                        continue
+                else:
                     continue
-            else:
-                continue
         dataset = parse_dataset(run)
         if dataset != dataset_str:
             continue
@@ -288,13 +277,14 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--out", type=str, default="data/images/sweep_plots")
     parser.add_argument("--data", type=str, default="loss_curve.csv")
+    parser.add_argument("--tag", type=str, default="")
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = parse_args()
-    data, out = Path(args.data), Path(args.out)
+    data, out = Path(f'{args.tag + "_" if args.tag else ""}{args.data}'), Path(args.out)
 
-    scrape_data(data, args.dataset)
+    scrape_data(data, args.dataset, args.tag)
 
     df = pd.read_csv(data)
 
