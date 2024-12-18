@@ -9,29 +9,11 @@ import plotly.express as px
 import numpy as np
 
 from experiments.sweep_eraser import sweep_params
-
+from experiments.scrape_wandb import DISPLAY_NAMES
 
 import plotly.io as pio
 
 pio.kaleido.scope.mathjax = None  # https://github.com/plotly/plotly.py/issues/3469
-
-DISPLAY_NAMES = {
-    # nets
-    "mlp": "MLP",
-    "convnext": "ConvNeXt",
-    "swin": "Swin",
-    "resmlp": "ResMLP",
-    # erasers
-    "leace": "LEACE",
-    "qleace": "QLEACE",
-    "qleace2": "ALF-QLEACE",
-    "control": "Control",
-    "qleace2": "ALF-QLEACE",
-    # activation functions
-    "relu": "ReLU",
-    "gelu": "GELU",
-    "swiglu": "SwiGLU",
-}
 
 
 def load_sweep_data(data_path: Path) -> pd.DataFrame:

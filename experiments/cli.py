@@ -1,74 +1,116 @@
-from argparse import ArgumentParser
 from pathlib import Path
-from functools import partial
-from typing import Any
+from typing import TypeVar, Type, Any, cast, Literal
+from dataclasses import dataclass
+from simple_parsing import ArgumentParser
+from tqdm.auto import tqdm
+import lovely_tensors as lt
 
-from datasets import load_dataset
 import wandb
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.v2 as transforms
+from torch import Tensor
+from torchvision.datasets import CIFAR10
 from torchvision.transforms.v2.functional import to_tensor
+from datasets import load_dataset, DatasetDict
+from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
-from torch import Tensor
-from torchvision.datasets import CIFAR10
-from tqdm.auto import tqdm
-import lovely_tensors as lt
-from mup import make_base_shapes
 
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
 from mdl.sweep import Sweep
 from mdl.vision_probe import ConvNextProbe, VisionProbe, SwinProbe
 from mdl.resnet_probe import ResNetProbe
 
-lt.monkey_patch()
+
+@dataclass
+class Args:
+    # General settings
+    name: str = ""
+    out: str = "results"
+
+    # Dataset options
+    dataset: Literal["cifar10", "mnist", "cifarnet"] = "cifar10"
+    eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace"] = "control"
+    normalize: bool = False
+    normalize_alf_qleace: bool = False
+    
+    # Model architecture
+    net: Literal["mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin"] = "mlp"
+    act: Literal["relu", "gelu", "swiglu"] = "relu"
+    
+    # Model dimensions
+    width: int = 128
+    depth: int = 2
+    mup_width: int | None = None  # Width of the base model used to tune the initial LR
+    mup_depth: int | None = None  # Depth of the base model used to tune the initial LR
+    
+    # Training parameters
+    lr: float = 1e-3
+    b1: float = 0.9
+    num_seeds: int = 5
+    max_epochs: int = 30_000
+    early_stop_epochs: int = 100
+    schedulefree: bool = False
+    
+    # Runtime flags
+    debug: bool = False  # Run a single trial with all data
+    nocache: bool = False
+    save: bool = False
+    overwrite: bool = False
 
 
-def get_cifarnet(device="cpu"):
-    nontest = load_dataset("EleutherAI/cifarnet", split='train') # type: ignore
+T = TypeVar("T")
+
+def assert_type(typ: Type[T], obj: Any) -> T:
+    """Assert that an object is of a given type at runtime and return it."""
+    if not isinstance(obj, typ):
+        raise TypeError(f"Expected {typ.__name__}, got {type(obj).__name__}")
+
+    return cast(typ, obj)
+
+
+def get_cifarnet():
     def map_fn(ex):
-        return {
-            'input_ids': transforms.ToTensor()(ex['img']),
-            'label': ex['label']
-        }
+        return {"input_ids": to_tensor(ex["img"]), "label": ex["label"]}
 
-    nontest: HfDataset = nontest.map(function=map_fn) # type: ignore
-    nontest.set_format(type='torch', columns=['input_ids', 'label'])
+    data = assert_type(DatasetDict, load_dataset("EleutherAI/cifarnet"))
 
-    X: Tensor = nontest['input_ids'].to(device) # type: ignore
-    Y: Tensor = nontest['label'].to(device) # type: ignore
+    nontest = data["train"].map(function=map_fn)
+    nontest.set_format(type="torch", columns=["input_ids", "label"])
+
+    X = assert_type(Tensor, nontest["input_ids"])
+    Y = assert_type(Tensor, nontest["label"])
 
     # Shuffle deterministically
     rng = torch.Generator(device=X.device).manual_seed(42)
     perm = torch.randperm(len(X), generator=rng, device=X.device)
     X, Y = X[perm], Y[perm]
 
+    # Get number of classes
     k = int(Y.max()) + 1
 
     # Split train and validation
     val_size = 1024
-
     X_train, X_val = X[:-val_size], X[-val_size:]
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
 
-    # Test set is entirely separate
-    test = load_dataset("EleutherAI/cifarnet", split='test') # type: ignore
-    test = test.map(map_fn)
-    test.set_format(type='torch', columns=['input_ids', 'label'])
+    # Load test set
+    test = data["test"].map(map_fn)
+    test.set_format(type="torch", columns=["input_ids", "label"])
 
-    X_test: Tensor = test['input_ids'].to(device) # type: ignore
-    Y_test: Tensor = test['label'].to(device) # type: ignore
+    X_test = assert_type(Tensor, test["input_ids"])
+    Y_test = assert_type(Tensor, test["label"])
 
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
 
 
-def get_cifar10():
+def get_cifar10(device: str | torch.device):
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
-
     images, labels = zip(*nontest)
-    X: Tensor = torch.stack(list(map(to_tensor, images))).to(device)
+
+    X = torch.stack(list(map(to_tensor, images))).to(device)
     Y = torch.tensor(labels).to(device)
 
     # Shuffle deterministically
@@ -80,128 +122,130 @@ def get_cifar10():
 
     # Split train and validation
     val_size = 1024
-
     X_train, X_val = X[:-val_size], X[-val_size:]
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
 
-    # Test set is entirely separate
+    # Load test set
     test = CIFAR10(root="/home/lucia/cifar10-test", train=False, download=True)
     test_images, test_labels = zip(*test)
+
     X_test: Tensor = torch.stack(list(map(to_tensor, test_images))).to(device)
     Y_test = torch.tensor(test_labels).to(device)
 
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
 
 
-if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def normalize_dataset(
+    X: Tensor, X_train: Tensor, X_val: Tensor, X_test: Tensor
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    eps = torch.finfo(X_train.dtype).eps
+    X_flat = X_train.reshape(X_train.shape[0], -1)
 
-    parser = ArgumentParser()
-    parser.add_argument("--name", type=str, default="")
-    parser.add_argument("--out", type=str, default="results")
-    parser.add_argument("--eraser", type=str, choices=("control", "leace", "oleace", "qleace", "qleace2"), default="control")
-    parser.add_argument("--net", type=str, choices=("mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin"), default="mlp")
-    parser.add_argument("--mup_width", type=int, help="Width of the base model used to tune the initial LR")
-    parser.add_argument("--mup_depth", type=int, help="Depth of the base model used to tune the initial LR")
-    parser.add_argument("--b1", type=float, default=0.9)
-    parser.add_argument("--width", type=int, default=128)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--depth", type=int, default=2)
-    parser.add_argument("--num_seeds", type=int, default=5)
-    parser.add_argument("--max_epochs", type=int, default=30_000)
-    parser.add_argument("--early_stop_epochs", type=int, default=100)
-    parser.add_argument("--normalize_qleace2", action="store_true")
-    parser.add_argument("--schedulefree", action="store_true")
-    parser.add_argument("--dataset", type=str, choices=("cifar10", "mnist", "cifarnet"), default="cifar10")
-    parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
-    parser.add_argument("--muon", action="store_true")
-    parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--nocache", action="store_true")
-    parser.add_argument("--save", action="store_true")
-    parser.add_argument("--normalize", action="store_true")
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--trial", action="store_true", help="Run a single trial with all data")
-    args = parser.parse_args()
-    print(args.lr)
+    mean = X_flat.mean(dim=0, keepdim=True)
+    scaling = torch.std(X_flat, dim=0) + eps
 
-    if args.dataset == "cifar10":
-        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10()
-    elif args.dataset == "cifarnet":
-        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifarnet()
-    else:
-        raise ValueError(f"Unknown dataset: {args.dataset}")
+    def normalize_data(data: Tensor) -> Tensor:
+        data_flat = data.reshape(data.shape[0], -1)
+        data_centered = data_flat - mean
+        data_normalized = data_centered / scaling
+        return data_normalized.reshape(data.shape)
 
-    num_features = X.shape[1] * X.shape[2] * X.shape[3]
+    X = normalize_data(X)
+    X_train = normalize_data(X_train)
+    X_val = normalize_data(X_val)
+    X_test = normalize_data(X_test)
 
-    def normalize(X, X_train, X_val, X_test):
-        X_flat = X.reshape(X.shape[0], -1)
-        
-        mean = X_flat.mean(dim=0, keepdim=True)
-        X_centered = X_flat - mean
-        
-        cov = (X_centered.T @ X_centered) / (X_centered.shape[0] - 1)
-        
-        scaling = torch.sqrt(torch.diagonal(cov))
-        scaling = torch.where(scaling > 0, scaling, torch.ones_like(scaling))
-        
-        def normalize_data(data: Tensor) -> Tensor:
-            data_flat = data.reshape(data.shape[0], -1)
-            data_centered = data_flat - mean
-            data_normalized = data_centered / scaling
-            return data_normalized.reshape(data.shape)
-        
-        X = normalize_data(X)
-        X_train = normalize_data(X_train)
-        X_val = normalize_data(X_val)
-        X_test = normalize_data(X_test)
+    return X, X_train, X_val, X_test
 
-        return X, X_train, X_val, X_test
 
-    # Populate eraser cache using training data
-    state_path = Path("erasers_cache") / f"{args.dataset}_state_2.pth"
+class IdentityEraser:
+    def __init__(self):
+        pass
+    
+    def __call__(self, x: Tensor) -> Tensor:
+        return x
+
+    def to(self, device: str | torch.device) -> "IdentityEraser":
+        return self
+
+
+def load_eraser(args: Args, device: str | torch.device, fit_device: str | torch.device):
+    state_path = Path("erasers_cache") / f"{args.dataset}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
-    if args.eraser != "control" and (args.eraser not in state or args.nocache):
-        cls = {
-            "leace": LeaceFitter,
-            "qleace": QuadraticFitter,
-            "qleace2": AlfQLeaceFitter,
-        }[args.eraser]
-
-        dtype = torch.bfloat16 if args.dataset == "cifarnet" else torch.float32
-        if args.eraser == "qleace2":
-            dtype = torch.float32
-
-        if args.eraser == "qleace2":
-            print("Using QLEACE2")
-            fitter = cls(
-                num_features, k, dtype=dtype, device=device, shrinkage=True
-            )
+    if args.eraser not in state or args.nocache:
+        if args.eraser == "control":
+            state[args.eraser] = IdentityEraser()
         else:
-            fitter = cls(
-                num_features, k, dtype=dtype, device=device
-            )
+            cls = {
+                "leace": LeaceFitter,
+                "qleace": QuadraticFitter,
+                "alf_qleace": AlfQLeaceFitter,
+            }[args.eraser]
 
-        for x, y in tqdm(zip(X_train, Y_train)):
-            y = torch.as_tensor(y).view(1)
-            if args.eraser != "qleace":
-                y = F.one_hot(y, k)
+            fitter = cls(num_features, k, dtype=torch.float32, device=device)
 
-            fitter.update(x.view(1, -1).to(device).to(dtype), y.to(device))
+            for x, y in tqdm(zip(X_train, Y_train)):
+                y = torch.as_tensor(y).view(1)
+                if args.eraser != "qleace":
+                    y = F.one_hot(y, k)
 
-        if args.dataset == "cifarnet":
-            fitter = fitter.to("cpu")
-        eraser = fitter.eraser
+                fitter.update(x.view(1, -1).to(device).to(torch.float32), y.to(device))
 
-        state[args.eraser] = fitter.eraser
+            fitter = fitter.to(fit_device)
+            state[args.eraser] = fitter.eraser
         torch.save(state, state_path)
     
-    if args.eraser != "control":
-        images = state[args.eraser](X_train[:5].flatten(1)).reshape_as(X_train[:5])
-        import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
+    return state[args.eraser]
 
-        # original_images = X_train[:5]; [vutils.save_image(original_images[i], f'saved_images/image_{i}_original_{args.dataset}.png', normalize=True) for i in range(5)]
+
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    lt.monkey_patch()
+
+    parser = ArgumentParser()
+    parser.add_arguments(Args, dest="args")
+    args = parser.parse_args().args
+
+    # Initialize directories
+    mup_path = Path("data/mup")
+    mup_path.mkdir(exist_ok=True)
+
+    data_path = Path(
+        f"/mnt/ssd-1/lucia/{args.out}"
+        if not args.debug
+        else f"/mnt/ssd-1/lucia/debug-{args.out}"
+    )
+    data_path.mkdir(exist_ok=True, parents=True)
+    
+    seed_path = Path(f"data/{args.out}-seeds")
+    seed_path.mkdir(exist_ok=True, parents=True)
+
+    # Get dataset
+    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = {
+        "cifar10": get_cifar10(device),
+        "cifarnet": get_cifarnet(),
+    }[args.dataset]
+
+    if args.normalize:
+        assert args.eraser == "control"
+        X, X_train, X_val, X_test = normalize_dataset(X, X_train, X_val, X_test)
+
+    num_features = X.shape[1] * X.shape[2] * X.shape[3]
+
+    # Fit eraser on dataset and save to cache
+    state_path = Path("erasers_cache") / f"{args.dataset}_state.pth"
+    state_path.parent.mkdir(exist_ok=True)
+    state = {} if not state_path.exists() else torch.load(state_path)
+
+    eraser = load_eraser(args, device, device if args.dataset != "cifarnet" else "cpu")
+
+    # if args.eraser != "control":
+    # images = state[args.eraser].to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
+    # import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
+
+    # original_images = X_train[:5]; [vutils.save_image(original_images[i], f'saved_images/image_{i}_original_{args.dataset}.png', normalize=True) for i in range(5)]
 
     model_cls = {
         "mlp": MlpProbe,
@@ -213,6 +257,32 @@ if __name__ == "__main__":
         "swin": SwinProbe,
     }[args.net]
 
+    # Prepare hyperparameter scaling factors and base shapes
+    base_model = model_cls(
+        num_classes=k,
+        num_features=num_features,
+        num_layers=args.depth,  # mup depth unsupported
+        hidden_size=args.mup_width if args.mup_width else args.width,
+    )
+    delta_model = model_cls(
+        num_classes=k,
+        num_features=num_features,
+        num_layers=args.depth,
+        hidden_size=args.width,
+    )
+
+    base_shapes_path = mup_path / f"mup-{args.net}-{args.width}-{args.depth}-{args.mup_width}.bsh"
+    make_base_shapes(base_model, delta_model, savefile=str(base_shapes_path))
+
+    if args.mup_depth:
+        if model_cls == MlpProbe:
+            # Depth-wise scaling for MLPs from https://arxiv.org/pdf/2305.07810
+            args.lr = args.lr * (args.mup_depth / args.depth) ** (3 / 2)
+        else:
+            # More conservative scaling for vision models
+            args.lr = args.lr * (args.mup_depth / args.depth) ** (1 / 2)
+
+    # Define flattening, augmentations, and eraser transform
     flatten = {
         "mlp": True,
         "resmlp": True,
@@ -226,98 +296,55 @@ if __name__ == "__main__":
     image_size = X.shape[-1]
     padding = round(image_size * 0.125)
 
-    if flatten[args.net]:
-
-        def reshape(x):
-            "reshape tensor to CxHxW"
-            return x.view(-1, X.shape[1], X.shape[2], X.shape[3])
-
-        augment = transforms.Compose(
-            [
-                transforms.Lambda(reshape),
-                transforms.RandomCrop(image_size, padding=padding),
-                transforms.RandomHorizontalFlip(),
-                transforms.Lambda(lambda x: x.flatten(1)),
-            ]
-        )
-
-        def none_transform(x, y):
-            return x.flatten(1)
-
-    else:
-        augment = transforms.Compose(
-            [
-                transforms.RandomCrop(image_size, padding=padding),
-                transforms.RandomHorizontalFlip(),
-            ]
-        )
-
-        def none_transform(x, y):
-            return x
-
-    if args.eraser == "leace" or (args.eraser == "qleace2" and not args.normalize_qleace2):
-        def erase(x: Tensor, y: Tensor, eraser):
-            x_erased = eraser(x.flatten(1))
-            return x_erased if flatten[args.net] else x_erased.reshape_as(x)
-    elif args.eraser == "qleace2" and args.normalize_qleace2:
-        scale = 7.68 if args.dataset == "cifar10" else 2.62
-        def erase(x: Tensor, y: Tensor, eraser):
-            # 2.77 = sqrt(7.68), where 7.68 is the ratio of the trace of the covariance matrix 
-            # of the original data to the trace of the covariance matrix of the erased data
-            x_erased = eraser(x.flatten(1)) * scale
-            return x_erased if flatten[args.net] else x_erased.reshape_as(x)
-    else:
-
-        def erase(x: Tensor, y: Tensor, eraser):
-            x_erased = eraser(x.flatten(1), y)
-            return x_erased if flatten[args.net] else x_erased.reshape_as(x)
-
-    transform = (
-        partial(erase, eraser=state[args.eraser].to(device))
-        if args.eraser != "control"
-        else none_transform
+    augment = transforms.Compose(
+        [
+            transforms.Lambda(lambda x: x.view(-1, X.shape[1], X.shape[2], X.shape[3])),
+            transforms.RandomCrop(image_size, padding),
+            transforms.RandomHorizontalFlip(),
+            transforms.Lambda(lambda x: x.flatten(1))
+        ]
+        if flatten[args.net]
+        else [
+            transforms.RandomCrop(image_size, padding),
+            transforms.RandomHorizontalFlip(),
+        ]
     )
 
-    # TODO Lucia normalize eraserd data - currently only supports control run
-    if args.normalize:
-        X, X_train, X_val, X_test = normalize(X, X_train, X_val, X_test)
+    def erase_transform(x: Tensor, y: Tensor):
+        x_erased = (
+            eraser(x.flatten(1)) 
+            if args.eraser != "leace" 
+            else eraser(x.flatten(1), y)
+        )
+        return x_erased if flatten[args.net] else x_erased.reshape_as(x)
 
-    base_model = model_cls(
-        num_classes=k,
-        num_features=num_features,
-        num_layers=args.depth, # mup depth unsupported
-        hidden_size=args.mup_width if args.mup_width else args.width,
-    )
-    delta_model = model_cls(
-        num_classes=k,
-        num_features=num_features,
+    # Collect MDL data
+    probe_kwargs = dict(
         num_layers=args.depth,
         hidden_size=args.width,
+        learning_rate=args.lr,
+        schedule_free=args.schedulefree,
+        betas=(args.b1, 0.999),
+        base_shapes_path=base_shapes_path,
     )
-    base_shapes_path = f"mup-{args.net}-{args.width}-{args.depth}-{args.mup_width}.bsh"
-    make_base_shapes(base_model, delta_model, savefile=base_shapes_path)
-
-    if args.mup_depth and args.depth != args.mup_depth:
-        if model_cls == MlpProbe:
-            # Implement depth-wise scaling from https://arxiv.org/pdf/2305.07810
-            args.lr = args.lr * (args.mup_depth / args.depth) ** (3/2)
-        else:
-            # Implement more conservative scaling for vision models
-            args.lr = args.lr * (args.mup_depth / args.depth) ** (1/2)
-
-    seed_path = Path(
-        f"/mnt/ssd-1/lucia/{args.out}-seeds"
-        if not args.debug
-        else f"/mnt/ssd-1/lucia/debug-{args.out}-seeds"
-    )
-    seed_path.mkdir(exist_ok=True, parents=True)
+    if model_cls == MlpProbe:
+        probe_kwargs["activation"] = args.act   
+    if args.debug:
+        # These are otherwise passed into the sweep
+        probe_kwargs["num_classes"] = k
+        probe_kwargs["num_features"] = num_features
+        probe_kwargs["dtype"] = torch.float32
 
     results = []
     for seed in range(args.num_seeds):
         wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
 
-        if not args.overwrite and (seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth").exists():
-            results.append(torch.load(seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth"))
+        seed_file = (
+            seed_path
+            / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth"
+        )
+        if not args.overwrite and seed_file.exists():
+            results.append(torch.load(seed_file))
             continue
 
         run = (
@@ -326,66 +353,28 @@ if __name__ == "__main__":
                 entity="eleutherai",
                 name=wandb_name,
                 config={"eraser": args.eraser, **vars(args)},
-                reinit=True
-            ) 
+                reinit=True,
+            )
             if not args.debug
             else None
         )
 
-        if args.trial:
-            probe_kwargs: dict[str, Any] = dict(
-                num_classes=k,
-                num_features=num_features,
-                num_layers=args.depth,
-                hidden_size=args.width,
-                device=device,
-                learning_rate=args.lr,
-                schedule_free=args.schedulefree,
-                betas=(args.b1, 0.999),
-                base_shapes_path=base_shapes_path,
-                dtype=torch.float32,
-            )
-            if args.muon:
-                probe_kwargs['muon'] = True
-
-            if model_cls == MlpProbe:
-                probe_kwargs['activation'] = args.act
-
-            probe = model_cls(**probe_kwargs)
-            probe.fit(
+        if args.debug:
+            # Run a single trial with a large dataset
+            model_cls(**probe_kwargs).fit(
                 X_train[:10_000].to(device),
                 Y_train[:10_000].to(device),
                 x_val=X_val.to(device),
                 y_val=Y_val.to(device),
                 seed=0,
-                transform=transform,
+                transform=erase_transform,
                 augment=augment,
                 max_epochs=args.max_epochs,
-                early_stop_epochs=args.early_stop_epochs,
-                logger=run
+                early_stop_epochs=args.max_epochs,
+                logger=run,
             )
             wandb.finish()
             exit(0)
-
-        # name = (
-        #     None
-        #     if not args.save
-        #     else f"{args.net}_h={args.width}_d={args.depth}_{'_'.join(args.erasers)}_{args.name}"
-        # )
-        
-        probe_kwargs = dict(
-            num_layers=args.depth,
-            hidden_size=args.width,
-            learning_rate=args.lr,
-            schedule_free=args.schedulefree,
-            betas=(args.b1, 0.999),
-            base_shapes_path=base_shapes_path,
-        )
-        if args.muon:
-                probe_kwargs['muon'] = True
-        if model_cls == MlpProbe:
-            probe_kwargs['activation'] = args.act
-
 
         sweep = Sweep(
             num_features,
@@ -398,20 +387,21 @@ if __name__ == "__main__":
             ckpt_every=10,
             probe_kwargs=probe_kwargs,
         )
-
         results.append(
             sweep.run(
                 X,
                 Y,
                 seed=seed,
-                transform=transform,
+                transform=erase_transform,
                 augment=augment,
                 reduce_lr_on_plateau=False,
                 max_epochs=args.max_epochs,
                 early_stop_epochs=args.early_stop_epochs,
             )
         )
-        torch.save(results, seed_path / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth")
+
+        if not args.debug:
+            torch.save(results, seed_file)
 
         try:
             wandb.finish()
@@ -419,14 +409,7 @@ if __name__ == "__main__":
             print("Caught exception: ", e)
             pass
 
-
-    data_path = Path(
-        f"/mnt/ssd-1/lucia/{args.out}"
-        if not args.debug
-        else f"/mnt/ssd-1/lucia/debug-{args.out}"
-    )
-    data_path.mkdir(exist_ok=True, parents=True)
-    
+    # Save results
     torch.save(
         results,
         data_path

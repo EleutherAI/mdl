@@ -1,0 +1,146 @@
+from pathlib import Path
+from typing import Any
+import json
+
+import wandb
+from wandb.apis.public import Run
+import pandas as pd
+
+DISPLAY_NAMES = {
+    # nets
+    "mlp": "MLP",
+    "convnext": "ConvNeXt",
+    "swin": "Swin",
+    "resmlp": "ResMLP",
+    # erasers
+    "leace": "LEACE",
+    "qleace": "QLEACE",
+    "qleace2": "ALF-QLEACE",
+    "control": "Control",
+    "qleace2": "ALF-QLEACE",
+    # activation functions
+    "relu": "ReLU",
+    "gelu": "GELU",
+    "swiglu": "SwiGLU",
+}
+
+
+def parse_run_params(run: Run) -> dict | None:
+    """Parse run name parts into parameters."""
+    
+    parts: list[str] = run.name.split(' ')
+    
+    try:
+        eraser, _, width_str, depth_str, seed_str, net = parts[:6]
+        
+        remaining_params = parts[6:] # unfortunately the order of these varies
+        
+        param_dict: dict[str, Any] = {
+            'act': DISPLAY_NAMES['relu']
+        }
+        for param in remaining_params:
+            if param.startswith('b1='):
+                param_dict['b1'] = float(param.split('=')[1])
+            elif param.startswith('lr='):
+                param_dict['lr'] = float(param.split('=')[1])
+            elif param.startswith('act='):
+                param_dict['act'] = DISPLAY_NAMES[param.split('=')[1]]
+            
+        param_dict.update({
+            'net_id': net,
+            'seed': int(seed_str.split('=')[1]),
+            'width': int(width_str.split('=')[1]),
+            'depth': int(depth_str.split('=')[1]),
+            'eraser': DISPLAY_NAMES[eraser],
+            'net': DISPLAY_NAMES[net],
+            # 'date': run.created_at
+        })
+        return param_dict
+    except:
+        return None
+
+
+def parse_dataset(run: Run) -> str:
+    """Parse dataset from run name."""
+    try:
+        with run.file('wandb-metadata.json').download(replace=True) as f:
+            metadata = json.load(f)
+        args = metadata['args']
+    except:
+        print(list(run.files()))
+        return ''
+    if not args:
+        return ''
+
+    if '24-11-21' not in run.name and '24-11-19' not in run.name:
+        print(str(args))
+    
+    return 'cifarnet' if 'cifarnet' in str(args) else 'cifar10'
+
+
+def scrape_data(filename: Path, dataset_str: str, tag: str):
+    api = wandb.Api(timeout=1000)
+    runs = api.runs("eleutherai/mdl")
+
+    latest_runs = {}
+    for run in runs:
+        if tag:
+            if tag not in run.name:
+                continue
+        else:
+            if '24-11-21' not in run.name and '24-11-19' not in run.name:
+                if dataset_str == 'cifarnet' or 'resmlp' in run.name:
+                    if not 'result' in run.name and not 'cifarnet' in run.name:
+                        continue
+                else:
+                    continue
+                
+        dataset = parse_dataset(run)
+        if dataset != dataset_str:
+            continue
+
+        params = parse_run_params(run)
+        if not params:
+            continue
+        
+        params['dataset'] = dataset_str
+        
+        param_key = tuple(sorted(params.items()))
+
+        if param_key not in latest_runs or run.created_at > latest_runs[param_key].created_at:
+            latest_runs[param_key] = run
+
+    data = []
+    for param_key, run in latest_runs.items():
+        try:
+            params = dict(param_key)
+
+            history = list(run.scan_history())
+            if not history:
+                print(f"No loss data found for run {run.name}")
+                continue
+
+            log2_max = int(history[-1]['_step']).bit_length()
+            steps = [2 ** i for i in range(log2_max)]
+
+            run_data = []
+            for row in history:
+                if row['_step'] in steps:
+                    entry = {
+                        **params,
+                        'loss': row['val/loss'],
+                        'step': row['_step'],
+                        'run': run.name
+                    }
+                    run_data.append(entry)
+
+            data.extend(run_data)
+
+        except Exception as e:
+            print(f"Error processing run {run.name}: {e}")
+            continue
+
+    pd.DataFrame(data).to_csv(filename, index=False)
+    print(f"Saved loss curve to {filename}")
+
+

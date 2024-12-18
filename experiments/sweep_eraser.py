@@ -101,12 +101,6 @@ sweep_params = {
         'widths': [32, 64, 128], # 256, 512
         'depths': [2, 4, 8]
     },
-    # 'resnet': {
-    #     'mup_width': 4,
-    #     'mup_depth': 2,
-    #     'widths': [2, 4, 8], # num channels doubled after each layer
-    #     'depths': [2, 4, 8] #  16
-    # },
     'resmlp': {
         'mup_width': 128,
         'mup_depth': 2,
@@ -143,33 +137,15 @@ sweep_params = {
         'widths': [64, 128, 256, 512, 1024, 2048],
         'depths': [1, 2, 3, 4, 6, 8] # #  Loses coherence at 16, 1 breaks probe
     },
-    # 'linear': {
-    #     # Unused
-    #     'mup_width': 0,
-    #     'mup_depth': 0,
-    #     'widths': [0],
-    #     'depths': [0]
-    # },
 }
 
 def artifact_exists(width, depth, net, eraser, out, act, args):
-    artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}.pth"
-    or_names = [
-        f"{net}_{act}_h={width}_d={depth}_{eraser}_24-11-19.pth",
-        # f"{net}_{act}_h={width}_d={depth}_{eraser}_results.pth",
+    names = [
+        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}.pth",
+        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_24-11-19.pth"
     ]
 
-    if args.normalize:
-        artifact_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_n={args.normalize}_{out}.pth"
-        or_name = f"{net}_{act}_h={width}_d={depth}_{eraser}_n={args.normalize}_24-11-19.pth"
-        if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
-            return True
-        return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
-    
-    for or_name in or_names:
-        if (Path(f"/mnt/ssd-1/lucia/{out}") / or_name).exists():
-            return True
-    return (Path(f"/mnt/ssd-1/lucia/{out}") / artifact_name).exists()
+    return any((Path(f"/mnt/ssd-1/lucia/{out}") / name).exists() for name in names)
 
 
 def main():
