@@ -54,6 +54,8 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
         # Load data and create records
         data = torch.load(file)
         for seed, mdl_result in enumerate(data):
+            if type(mdl_result) == list:
+                mdl_result = mdl_result[0]
             records.append(
                 {
                     "net_id": net,  # to access the sweep_eraser.py hyperparameter dict

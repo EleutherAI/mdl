@@ -68,20 +68,22 @@ def parse_dataset(run: Run) -> str:
 
 
 def scrape_data(filename: Path, dataset_str: str, tag: str):
-    api = wandb.Api()
+    api = wandb.Api(timeout=1000)
     runs = api.runs("eleutherai/mdl")
 
     latest_runs = {}
     for run in runs:
-        if tag and tag not in run.name:
-            continue
-        if not tag:
+        if tag:
+            if tag not in run.name:
+                continue
+        else:
             if '24-11-21' not in run.name and '24-11-19' not in run.name:
                 if dataset_str == 'cifarnet' or 'resmlp' in run.name:
                     if not 'result' in run.name and not 'cifarnet' in run.name:
                         continue
                 else:
                     continue
+                
         dataset = parse_dataset(run)
         if dataset != dataset_str:
             continue

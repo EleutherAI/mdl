@@ -133,7 +133,7 @@ sweep_params = {
             'qleace2': 5e-4, # guessing
         },
         'b1': {
-            'control': 0.99,
+            'control': 0.95, # was 0.99 for cifar10
             'leace': 0.95,
             'qleace': 0.95,
             'qleace2': 0.95, # guessing

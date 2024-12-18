@@ -26,56 +26,6 @@ from mdl.resnet_probe import ResNetProbe
 lt.monkey_patch()
 
 
-def get_mnist():
-    train_dataset: HfDataset = load_dataset("mnist", split='train') # type: ignore
-
-    def map_fn(ex):
-        return {
-            'input_ids': transforms.ToTensor()(ex['image']),
-            'label': ex['label']
-        }
-
-    train_dataset = train_dataset.map(
-        function=map_fn,
-        remove_columns=['image'],
-        new_fingerprint='transformed_mnist', # type: ignore
-        keep_in_memory=True # type: ignore
-    )
-    train_dataset = train_dataset.with_format('torch')
-    train_dataset.set_format(type='torch', columns=['input_ids', 'label'])
-
-    print("Final columns:", train_dataset.column_names)
-
-    # Calculate mean and std of pixel values
-    input_ids = assert_type(Tensor, train_dataset['input_ids'])
-    mean = input_ids.mean().item()
-    std = input_ids.std().item()
-    def normalize(image):
-        transform = transforms.Compose([
-            transforms.Normalize((mean,), (std,))
-        ])
-        return transform(image)
-
-
-    test_dataset: HfDataset = load_dataset('mnist', split='test') # type: ignore
-
-    test_dataset = test_dataset.map(
-        function=map_fn,
-        remove_columns=['image'],
-        new_fingerprint='transformed_mnist', # type: ignore
-        keep_in_memory=True # type: ignore
-    )
-    test_dataset.set_format(type='torch', columns=['input_ids', 'label'])
-
-    test_dataset = test_dataset.map(
-        lambda example: {'input_ids': normalize(example['input_ids'])},
-        new_fingerprint='transformed_mnist'
-    )
-
-    return test_dataset
-
-
-
 def get_cifarnet(device="cpu"):
     nontest = load_dataset("EleutherAI/cifarnet", split='train') # type: ignore
     def map_fn(ex):
@@ -114,7 +64,7 @@ def get_cifarnet(device="cpu"):
     return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
 
 
-def get_cifar10(normalize: bool = False):
+def get_cifar10():
     nontest = CIFAR10("/home/lucia/cifar10", download=True)
 
     images, labels = zip(*nontest)
@@ -160,6 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_seeds", type=int, default=5)
     parser.add_argument("--max_epochs", type=int, default=30_000)
     parser.add_argument("--early_stop_epochs", type=int, default=100)
+    parser.add_argument("--normalize_qleace2", action="store_true")
     parser.add_argument("--schedulefree", action="store_true")
     parser.add_argument("--dataset", type=str, choices=("cifar10", "mnist", "cifarnet"), default="cifar10")
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
@@ -171,12 +122,10 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--trial", action="store_true", help="Run a single trial with all data")
     args = parser.parse_args()
+    print(args.lr)
 
-    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(device)
     if args.dataset == "cifar10":
-        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(normalize=args.normalize)
-    elif args.dataset == "mnist":
-        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_mnist()
+        (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10()
     elif args.dataset == "cifarnet":
         (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifarnet()
     else:
@@ -224,9 +173,15 @@ if __name__ == "__main__":
         if args.eraser == "qleace2":
             dtype = torch.float32
 
-        fitter = cls(
-            num_features, k, dtype=dtype, device=device, shrinkage=True
-        )
+        if args.eraser == "qleace2":
+            print("Using QLEACE2")
+            fitter = cls(
+                num_features, k, dtype=dtype, device=device, shrinkage=True
+            )
+        else:
+            fitter = cls(
+                num_features, k, dtype=dtype, device=device
+            )
 
         for x, y in tqdm(zip(X_train, Y_train)):
             y = torch.as_tensor(y).view(1)
@@ -242,8 +197,11 @@ if __name__ == "__main__":
         state[args.eraser] = fitter.eraser
         torch.save(state, state_path)
     
-    # images = state[args.eraser](X_train[:5].flatten(1)).reshape_as(X_train[:5])
-    # import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
+    if args.eraser != "control":
+        images = state[args.eraser](X_train[:5].flatten(1)).reshape_as(X_train[:5])
+        import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
+
+        # original_images = X_train[:5]; [vutils.save_image(original_images[i], f'saved_images/image_{i}_original_{args.dataset}.png', normalize=True) for i in range(5)]
 
     model_cls = {
         "mlp": MlpProbe,
@@ -297,11 +255,17 @@ if __name__ == "__main__":
         def none_transform(x, y):
             return x
 
-    if args.eraser == "leace" or args.eraser == "qleace2":
+    if args.eraser == "leace" or (args.eraser == "qleace2" and not args.normalize_qleace2):
         def erase(x: Tensor, y: Tensor, eraser):
             x_erased = eraser(x.flatten(1))
             return x_erased if flatten[args.net] else x_erased.reshape_as(x)
-
+    elif args.eraser == "qleace2" and args.normalize_qleace2:
+        scale = 7.68 if args.dataset == "cifar10" else 2.62
+        def erase(x: Tensor, y: Tensor, eraser):
+            # 2.77 = sqrt(7.68), where 7.68 is the ratio of the trace of the covariance matrix 
+            # of the original data to the trace of the covariance matrix of the erased data
+            x_erased = eraser(x.flatten(1)) * scale
+            return x_erased if flatten[args.net] else x_erased.reshape_as(x)
     else:
 
         def erase(x: Tensor, y: Tensor, eraser):
@@ -389,10 +353,10 @@ if __name__ == "__main__":
 
             probe = model_cls(**probe_kwargs)
             probe.fit(
-                X_train,
-                Y_train,
-                x_val=X_val,
-                y_val=Y_val,
+                X_train[:10_000].to(device),
+                Y_train[:10_000].to(device),
+                x_val=X_val.to(device),
+                y_val=Y_val.to(device),
                 seed=0,
                 transform=transform,
                 augment=augment,

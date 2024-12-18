@@ -125,14 +125,13 @@ class MlpProbe(Probe):
                 adamw_wd=0.01 # type: ignore
             )
             return ScheduleFreeWrapper(optimizer)
-        else:
-            opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
-        opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+        # opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
+        # opt_cls = AdamWScheduleFree if self.schedule_free else optim.AdamW
         if self.mup:
             return MuAdam(
-                self.parameters(), opt_cls, lr=self.learning_rate, betas=self.betas
+                self.parameters(), AdamWScheduleFree, lr=self.learning_rate, betas=self.betas, warmup_steps=1000
             )
-        return opt_cls(self.parameters(), lr=self.learning_rate, betas=self.betas)
+        return AdamWScheduleFree(self.parameters(), lr=self.learning_rate, betas=self.betas, warmup_steps=1000)
 
     def forward(self, x: Tensor) -> Tensor:
         return self.net(x)
