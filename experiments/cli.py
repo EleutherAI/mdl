@@ -11,7 +11,7 @@ import torchvision.transforms.v2 as transforms
 from torch import Tensor
 from torchvision.datasets import CIFAR10
 from torchvision.transforms.v2.functional import to_tensor
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, load_from_disk
 from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
@@ -30,9 +30,9 @@ class Args:
     out: str = "results"
 
     # Dataset options
-    dataset: Literal["cifar10", "mnist", "cifarnet"] = "cifar10"
+    dataset: Literal["cifar10", "mnist", "cifarnet", "fake-cifar10"] = "cifar10"
     eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace"] = "control"
-    orth: bool = False
+    method: Literal["leace", "orth", "none"] = "leace"
     shrinkage: bool = False
     normalize: bool = False
     post_erase_normalize: bool = False
@@ -142,6 +142,25 @@ def get_cifar10(device: str | torch.device):
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
+def get_fake_cifar10():
+    train = load_from_disk("transformed-cifar10/train")
+    X = torch.stack([to_tensor(img) for img in train["image"]])
+    Y = torch.tensor(train["label"])
+
+    # Shuffle deterministically
+    rng = torch.Generator(device=X.device).manual_seed(42)
+    perm = torch.randperm(len(X), generator=rng, device=X.device)
+    X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
 def normalize_dataset(
     X: Tensor, X_train: Tensor, X_val: Tensor
 ) -> tuple[Tensor, Tensor, Tensor]:
@@ -180,7 +199,7 @@ def load_eraser(
     device: str | torch.device,
     fit_device: str | torch.device,
     dtype: torch.dtype,
-    orth: bool,
+    method: str,
     shrinkage: bool,
     alf_qleace_target: float | None,
     X_train: Tensor,
@@ -202,9 +221,9 @@ def load_eraser(
             }[args.eraser]
 
             if args.eraser == "leace":
-                fitter = cls(num_features, k, dtype=dtype, device=device, method="orth" if orth else "leace", shrinkage=shrinkage)
+                fitter = cls(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
             elif args.eraser == "alf_qleace":
-                fitter = cls(num_features, k, dtype=dtype, device=device, method="leace", shrinkage=shrinkage, target_erasure=alf_qleace_target)
+                fitter = cls(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage, target_erasure=alf_qleace_target)
             else:
                 fitter = cls(num_features, k, dtype=dtype, device=device)
 
@@ -251,6 +270,7 @@ if __name__ == "__main__":
     (X_train, Y_train, X_val, Y_val, k, X, Y) = {
         "cifar10": get_cifar10(device),
         "cifarnet": get_cifarnet(),
+        "fake-cifar10": get_fake_cifar10(),
     }[args.dataset]
 
     if args.normalize:
@@ -274,7 +294,7 @@ if __name__ == "__main__":
         "cpu", # device if args.eraser != "leace" else "cpu",
         device if args.dataset != "cifarnet" else "cpu",
         dtype if args.eraser != "leace" else torch.float64,
-        args.orth,
+        args.method,
         args.shrinkage,
         args.alf_qleace_target,
         X_train,
@@ -285,7 +305,7 @@ if __name__ == "__main__":
     if args.eraser != "control":
         import torchvision.utils as vutils
         Path('saved_images').mkdir(exist_ok=True)
-        images = state[args.eraser].to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
+        images = eraser.to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
         [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}_{args.eraser}.png', normalize=True) for i in range(5)]
 
     model_cls = {
@@ -399,11 +419,11 @@ if __name__ == "__main__":
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} d={args.dataset}'
 
         seed_file = (
             seed_path
-            / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}.pth"
+            / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}_{args.dataset}.pth"
         )
         if not args.overwrite and seed_file.exists():
             results.append(torch.load(seed_file))
@@ -476,5 +496,5 @@ if __name__ == "__main__":
     torch.save(
         results,
         data_path
-        / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}.pth",
+        / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{args.dataset}.pth",
     )
