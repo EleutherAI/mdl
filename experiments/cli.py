@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import TypeVar, Type, Any, cast, Literal
 from dataclasses import dataclass
 from simple_parsing import ArgumentParser
-from tqdm.auto import tqdm
 import lovely_tensors as lt
 
 import wandb
@@ -33,19 +32,24 @@ class Args:
     # Dataset options
     dataset: Literal["cifar10", "mnist", "cifarnet"] = "cifar10"
     eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace"] = "control"
+    orth: bool = False
+    shrinkage: bool = False
     normalize: bool = False
-    normalize_alf_qleace: bool = False
-    
+    post_erase_normalize: bool = False
+    alf_qleace_target: float = 0.9
+
     # Model architecture
-    net: Literal["mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin"] = "mlp"
+    net: Literal["mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin"] = (
+        "mlp"
+    )
     act: Literal["relu", "gelu", "swiglu"] = "relu"
-    
+
     # Model dimensions
     width: int = 128
     depth: int = 2
     mup_width: int | None = None  # Width of the base model used to tune the initial LR
     mup_depth: int | None = None  # Depth of the base model used to tune the initial LR
-    
+
     # Training parameters
     lr: float = 1e-3
     b1: float = 0.9
@@ -53,15 +57,19 @@ class Args:
     max_epochs: int = 30_000
     early_stop_epochs: int = 100
     schedulefree: bool = False
-    
+
     # Runtime flags
-    debug: bool = False  # Run a single trial with all data
+    debug: bool = False
     nocache: bool = False
+    nowritecache: bool = False
     save: bool = False
     overwrite: bool = False
+    trial: bool = False  # Run a single trial with all data
+    wandb_run_id: str | None = None
 
 
 T = TypeVar("T")
+
 
 def assert_type(typ: Type[T], obj: Any) -> T:
     """Assert that an object is of a given type at runtime and return it."""
@@ -72,6 +80,15 @@ def assert_type(typ: Type[T], obj: Any) -> T:
 
 
 def get_cifarnet():
+    import os
+    import pickle
+    cache_dir = 'data_cache'
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, "cifar_processed.pkl")
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            return pickle.load(f)
+
     def map_fn(ex):
         return {"input_ids": to_tensor(ex["img"]), "label": ex["label"]}
 
@@ -96,14 +113,11 @@ def get_cifarnet():
     X_train, X_val = X[:-val_size], X[-val_size:]
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
 
-    # Load test set
-    test = data["test"].map(map_fn)
-    test.set_format(type="torch", columns=["input_ids", "label"])
+    with open(cache_path, "wb") as f:
+        pickle.dump((X_train, Y_train, X_val, Y_val, k, X, Y), f)
 
-    X_test = assert_type(Tensor, test["input_ids"])
-    Y_test = assert_type(Tensor, test["label"])
 
-    return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
+    return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
 def get_cifar10(device: str | torch.device):
@@ -125,19 +139,12 @@ def get_cifar10(device: str | torch.device):
     X_train, X_val = X[:-val_size], X[-val_size:]
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
 
-    # Load test set
-    test = CIFAR10(root="/home/lucia/cifar10-test", train=False, download=True)
-    test_images, test_labels = zip(*test)
-
-    X_test: Tensor = torch.stack(list(map(to_tensor, test_images))).to(device)
-    Y_test = torch.tensor(test_labels).to(device)
-
-    return X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y
+    return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
 def normalize_dataset(
-    X: Tensor, X_train: Tensor, X_val: Tensor, X_test: Tensor
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    X: Tensor, X_train: Tensor, X_val: Tensor
+) -> tuple[Tensor, Tensor, Tensor]:
     eps = torch.finfo(X_train.dtype).eps
     X_flat = X_train.reshape(X_train.shape[0], -1)
 
@@ -153,15 +160,14 @@ def normalize_dataset(
     X = normalize_data(X)
     X_train = normalize_data(X_train)
     X_val = normalize_data(X_val)
-    X_test = normalize_data(X_test)
 
-    return X, X_train, X_val, X_test
+    return X, X_train, X_val
 
 
 class IdentityEraser:
     def __init__(self):
         pass
-    
+
     def __call__(self, x: Tensor) -> Tensor:
         return x
 
@@ -169,8 +175,19 @@ class IdentityEraser:
         return self
 
 
-def load_eraser(args: Args, device: str | torch.device, fit_device: str | torch.device):
-    state_path = Path("erasers_cache") / f"{args.dataset}_state.pth"
+def load_eraser(
+    args: Args,
+    device: str | torch.device,
+    fit_device: str | torch.device,
+    dtype: torch.dtype,
+    orth: bool,
+    shrinkage: bool,
+    alf_qleace_target: float | None,
+    X_train: Tensor,
+    Y_train: Tensor,
+    nowritecache: bool,
+):
+    state_path = Path("erasers_cache") / f"{args.dataset}_{dtype}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
@@ -184,20 +201,28 @@ def load_eraser(args: Args, device: str | torch.device, fit_device: str | torch.
                 "alf_qleace": AlfQLeaceFitter,
             }[args.eraser]
 
-            fitter = cls(num_features, k, dtype=torch.float32, device=device)
+            if args.eraser == "leace":
+                fitter = cls(num_features, k, dtype=dtype, device=device, method="orth" if orth else "leace", shrinkage=shrinkage)
+            elif args.eraser == "alf_qleace":
+                fitter = cls(num_features, k, dtype=dtype, device=device, method="leace", shrinkage=shrinkage, target_erasure=alf_qleace_target)
+            else:
+                fitter = cls(num_features, k, dtype=dtype, device=device)
 
-            for x, y in tqdm(zip(X_train, Y_train)):
-                y = torch.as_tensor(y).view(1)
-                if args.eraser != "qleace":
-                    y = F.one_hot(y, k)
-
-                fitter.update(x.view(1, -1).to(device).to(torch.float32), y.to(device))
-
+            Y_tensor = (
+                F.one_hot(Y_train, k)
+                if args.eraser != "qleace"
+                else Y_train
+            ).to(device)
+            X_tensor = X_train.flatten(1).to(device).to(dtype)
+            fitter.update(X_tensor, Y_tensor)
             fitter = fitter.to(fit_device)
+            
             state[args.eraser] = fitter.eraser
-        torch.save(state, state_path)
-    
+        if not nowritecache:
+            torch.save(state, state_path)
+
     return state[args.eraser]
+
 
 
 if __name__ == "__main__":
@@ -218,19 +243,21 @@ if __name__ == "__main__":
         else f"/mnt/ssd-1/lucia/debug-{args.out}"
     )
     data_path.mkdir(exist_ok=True, parents=True)
-    
+
     seed_path = Path(f"data/{args.out}-seeds")
     seed_path.mkdir(exist_ok=True, parents=True)
 
     # Get dataset
-    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = {
+    (X_train, Y_train, X_val, Y_val, k, X, Y) = {
         "cifar10": get_cifar10(device),
         "cifarnet": get_cifarnet(),
     }[args.dataset]
 
     if args.normalize:
         assert args.eraser == "control"
-        X, X_train, X_val, X_test = normalize_dataset(X, X_train, X_val, X_test)
+        X, X_train, X_val, = normalize_dataset(X, X_train, X_val)
+
+    # Get std deviation scaling for each dimension on erased data
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
@@ -239,13 +266,27 @@ if __name__ == "__main__":
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
-    eraser = load_eraser(args, device, device if args.dataset != "cifarnet" else "cpu")
+    # ALF-QLEACE could be normalizing the variances by cutting off the top
+    dtype = torch.float32
+    # SVD is much more stable than eigh (pronounced eye gauge)
+    eraser = load_eraser(
+        args,
+        "cpu", # device if args.eraser != "leace" else "cpu",
+        device if args.dataset != "cifarnet" else "cpu",
+        dtype if args.eraser != "leace" else torch.float64,
+        args.orth,
+        args.shrinkage,
+        args.alf_qleace_target,
+        X_train,
+        Y_train,
+        args.nowritecache,
+    ).to(device)
 
-    # if args.eraser != "control":
-    # images = state[args.eraser].to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
-    # import torchvision.utils as vutils; from pathlib import Path; Path('saved_images').mkdir(exist_ok=True); [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}.png', normalize=True) for i in range(5)]
-
-    # original_images = X_train[:5]; [vutils.save_image(original_images[i], f'saved_images/image_{i}_original_{args.dataset}.png', normalize=True) for i in range(5)]
+    if args.eraser != "control":
+        import torchvision.utils as vutils
+        Path('saved_images').mkdir(exist_ok=True)
+        images = state[args.eraser].to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
+        [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}_{args.eraser}.png', normalize=True) for i in range(5)]
 
     model_cls = {
         "mlp": MlpProbe,
@@ -271,7 +312,9 @@ if __name__ == "__main__":
         hidden_size=args.width,
     )
 
-    base_shapes_path = mup_path / f"mup-{args.net}-{args.width}-{args.depth}-{args.mup_width}.bsh"
+    base_shapes_path = (
+        mup_path / f"mup-{args.net}-{args.width}-{args.depth}-{args.mup_width}.bsh"
+    )
     make_base_shapes(base_model, delta_model, savefile=str(base_shapes_path))
 
     if args.mup_depth:
@@ -301,7 +344,7 @@ if __name__ == "__main__":
             transforms.Lambda(lambda x: x.view(-1, X.shape[1], X.shape[2], X.shape[3])),
             transforms.RandomCrop(image_size, padding),
             transforms.RandomHorizontalFlip(),
-            transforms.Lambda(lambda x: x.flatten(1))
+            transforms.Lambda(lambda x: x.flatten(1)),
         ]
         if flatten[args.net]
         else [
@@ -310,13 +353,31 @@ if __name__ == "__main__":
         ]
     )
 
+    # If LEACE, scale normalization can use the covariance of the vanilla data
+    # If ALF-QLEACE, scale normalization must use the covariance of the erased data
+    # I will gather these and hard code
+    if args.post_erase_normalize:
+        if args.eraser == "leace" or args.eraser == "control":
+            std = X_train.flatten(1).std(dim=0).to(device)
+        elif args.eraser == "alf_qleace":
+            std = eraser.to("cpu")(X_train.flatten(1)).std(dim=0).to(device)
+        else:
+            print("Not implemented")
+    else:
+        std = torch.tensor(1.0).to(device)
+
     def erase_transform(x: Tensor, y: Tensor):
         x_erased = (
-            eraser(x.flatten(1)) 
-            if args.eraser != "leace" 
-            else eraser(x.flatten(1), y)
+            eraser(x.flatten(1), y) if args.eraser == "qleace" else eraser(x.flatten(1))
         )
+
+        if args.post_erase_normalize:
+            x_erased = x_erased / std
+
         return x_erased if flatten[args.net] else x_erased.reshape_as(x)
+
+    if args.post_erase_normalize:
+        X_val = X_val.flatten(1) / X_train.flatten(1).std(dim=0).to(X_val.device)
 
     # Collect MDL data
     probe_kwargs = dict(
@@ -328,16 +389,17 @@ if __name__ == "__main__":
         base_shapes_path=base_shapes_path,
     )
     if model_cls == MlpProbe:
-        probe_kwargs["activation"] = args.act   
-    if args.debug:
+        probe_kwargs["activation"] = args.act
+    if args.trial:
         # These are otherwise passed into the sweep
         probe_kwargs["num_classes"] = k
         probe_kwargs["num_features"] = num_features
-        probe_kwargs["dtype"] = torch.float32
+        probe_kwargs["dtype"] = dtype
+        probe_kwargs["device"] = device
 
     results = []
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.3f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
+        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs}{" d=cifarnet" if args.dataset == "cifarnet" else ""}'
 
         seed_file = (
             seed_path
@@ -350,20 +412,21 @@ if __name__ == "__main__":
         run = (
             wandb.init(
                 project="mdl",
+                id=args.wandb_run_id if args.wandb_run_id else None,
                 entity="eleutherai",
                 name=wandb_name,
                 config={"eraser": args.eraser, **vars(args)},
-                reinit=True,
+                reinit=args.wandb_run_id is None,
             )
             if not args.debug
             else None
         )
 
-        if args.debug:
+        if args.trial:
             # Run a single trial with a large dataset
             model_cls(**probe_kwargs).fit(
-                X_train[:10_000].to(device),
-                Y_train[:10_000].to(device),
+                X_train[:len(X_train)//2].to(device),
+                Y_train[:len(Y_train)//2].to(device),
                 x_val=X_val.to(device),
                 y_val=Y_val.to(device),
                 seed=0,
@@ -380,7 +443,7 @@ if __name__ == "__main__":
             num_features,
             k,
             device=device,
-            dtype=torch.float32,
+            dtype=dtype,
             num_chunks=10,
             logger=run,
             probe_cls=model_cls,

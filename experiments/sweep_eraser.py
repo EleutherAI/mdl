@@ -58,24 +58,42 @@ def parse_args():
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--nocache", action="store_true")
     parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10"), default="cifar10")
-    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "qleace2"])
+    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "alf_qleace"])
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     return parser.parse_args()
 
 # Most to least powerful
 sweep_params = {
+    'mlp': {
+        'lr': {
+            'control': 5e-4,
+            'leace': 5e-4,
+            'qleace': 5e-4,
+            'alf_qleace': 5e-4, # guessing
+        },
+        'b1': {
+            'control': 0.95, # was 0.99 for cifar10
+            'leace': 0.95,
+            'qleace': 0.95,
+            'alf_qleace': 0.95, # guessing
+        },
+        'mup_width': 128,
+        'mup_depth': 2,
+        'widths': [64, 128, 256, 512, 1024, 2048],
+        'depths': [1, 2, 3, 4, 6, 8] # #  Loses coherence at 16, 1 breaks probe
+    },
     'convnext': {
         'lr': {
             'control': 5e-5,
             'leace': 1e-4,
             'qleace': 1e-3,
-            'qleace2': 1e-3,
+            'alf_qleace': 1e-3,
         },
         'b1': {
             'control': 0.9,
             'leace': 0.9,
             'qleace': 0.9,
-            'qleace2': 0.9,
+            'alf_qleace': 0.9,
         },
         # Width specifies the first stage; at each additional stage the width is doubled
         'mup_width': 40,
@@ -88,13 +106,13 @@ sweep_params = {
             'control': 1e-3,
             'leace': 1e-3,
             'qleace': 1e-3,
-            'qleace2': 1e-3,
+            'alf_qleace': 1e-3,
         },
         'b1': {
             'control': 0.9,
             'leace': 0.9,
             'qleace': 0.9,
-            'qleace2': 0.9,
+            'alf_qleace': 0.9,
         },
         'mup_width': 32,
         'mup_depth': 2,
@@ -110,32 +128,14 @@ sweep_params = {
             'control': 5e-4,
             'leace': 5e-4,
             'qleace': 5e-4,
-            'qleace2': 5e-4, # guessing
+            'alf_qleace': 5e-4, # guessing
         },
         'b1': {
             'control': 0.99,
             'leace': 0.95,
             'qleace': 0.95,
-            'qleace2': 0.95, # guessing
+            'alf_qleace': 0.95, # guessing
         },
-    },
-    'mlp': {
-        'lr': {
-            'control': 5e-4,
-            'leace': 5e-4,
-            'qleace': 5e-4,
-            'qleace2': 5e-4, # guessing
-        },
-        'b1': {
-            'control': 0.95, # was 0.99 for cifar10
-            'leace': 0.95,
-            'qleace': 0.95,
-            'qleace2': 0.95, # guessing
-        },
-        'mup_width': 128,
-        'mup_depth': 2,
-        'widths': [64, 128, 256, 512, 1024, 2048],
-        'depths': [1, 2, 3, 4, 6, 8] # #  Loses coherence at 16, 1 breaks probe
     },
 }
 
@@ -144,6 +144,9 @@ def artifact_exists(width, depth, net, eraser, out, act, args):
         f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}.pth",
         f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_24-11-19.pth"
     ]
+    if eraser == "alf_qleace":
+        names.append(f"{net}_{act}_h={width}_d={depth}_qleace2{'_n=' + args.normalize if args.normalize else ''}_24-12-19.pth")
+        names.append(f"{net}_{act}_h={width}_d={depth}_qleace{'_n=' + args.normalize if args.normalize else ''}_{out}.pth")
 
     return any((Path(f"/mnt/ssd-1/lucia/{out}") / name).exists() for name in names)
 

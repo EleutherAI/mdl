@@ -13,11 +13,11 @@ DISPLAY_NAMES = {
     "swin": "Swin",
     "resmlp": "ResMLP",
     # erasers
+    "control": "Control",
     "leace": "LEACE",
     "qleace": "QLEACE",
     "qleace2": "ALF-QLEACE",
-    "control": "Control",
-    "qleace2": "ALF-QLEACE",
+    "alf_qleace": "ALF-QLEACE",
     # activation functions
     "relu": "ReLU",
     "gelu": "GELU",
