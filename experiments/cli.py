@@ -116,7 +116,6 @@ def get_cifarnet():
     with open(cache_path, "wb") as f:
         pickle.dump((X_train, Y_train, X_val, Y_val, k, X, Y), f)
 
-
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
@@ -254,7 +253,7 @@ if __name__ == "__main__":
 
     # Initialize directories
     mup_path = Path("data/mup")
-    mup_path.mkdir(exist_ok=True)
+    mup_path.mkdir(exist_ok=True, parents=True)
 
     data_path = Path(
         f"/mnt/ssd-1/lucia/{args.out}"
