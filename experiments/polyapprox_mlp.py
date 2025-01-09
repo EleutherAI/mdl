@@ -133,7 +133,7 @@ def main():
     # Load each MLP checkpoint ols
     out_path = Path("data/polyapprox_mlp.pth")
     ckpts = list(Path("probe-ckpts").glob("*.pth"))
-    ols_results = {} if not out_path.exists() else torch.load(out_path)
+    ols_results = {} if not out_path.exists() else torch.load(out_path, weights_only=False)
     base_shapes_path = f"mup-mlp-128-1-128.bsh"
     probe = MlpProbe(
         num_features=32 * 32 * 3, num_classes=10, hidden_size=128, num_layers=1
@@ -160,7 +160,7 @@ def main():
 
         print(f"Processing {ckpt.name}")
 
-        probe.load_state_dict(torch.load(ckpt))
+        probe.load_state_dict(torch.load(ckpt, weights_only=False))
         set_base_shapes(probe, base_shapes_path, rescale_params=False)
         probe.to(device)
 

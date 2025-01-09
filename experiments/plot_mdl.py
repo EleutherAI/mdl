@@ -39,7 +39,7 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
         depth = int(depth.split("=")[1])
 
         # Load data and create records
-        data = torch.load(file)
+        data = torch.load(file, weights_only=False)
         for seed, mdl_result in enumerate(data):
             if type(mdl_result) == list:
                 mdl_result = mdl_result[0]

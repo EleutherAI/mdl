@@ -14,7 +14,7 @@ import torchvision.transforms.v2 as transforms
 import torchvision.utils as vutils
 from torch import Tensor
 from torchvision.datasets import CIFAR10
-from torchvision.transforms.v2.functional import to_tensor
+from torchvision.transforms.v2.functional import to_dtype, to_image
 from datasets import load_dataset, DatasetDict, load_from_disk
 from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
@@ -92,8 +92,12 @@ def get_cifarnet():
         with open(cache_path, "rb") as f:
             return pickle.load(f)
 
+
     def map_fn(ex):
-        return {"input_ids": to_tensor(ex["img"]), "label": ex["label"]}
+        return {
+            "input_ids": to_dtype(to_image(ex["img"]), dtype=torch.float32, scale=True), 
+            "label": ex["label"]
+        }
 
     data = assert_type(DatasetDict, load_dataset("EleutherAI/cifarnet"))
 
@@ -126,7 +130,12 @@ def get_cifar10(device: str | torch.device):
     nontest = CIFAR10("data/cache/cifar10", download=True)
     images, labels = zip(*nontest)
 
-    X = torch.stack(list(map(to_tensor, images))).to(device)
+   
+    X = torch.stack([
+        to_dtype(to_image(item), dtype=torch.float32, scale=True) 
+        for item in images
+    ]).to(device)
+
     Y = torch.tensor(labels).to(device)
 
     # Shuffle deterministically
@@ -146,7 +155,7 @@ def get_cifar10(device: str | torch.device):
 
 def get_fake_cifarnet():
     train = load_dataset("EleutherAI/erased-cifarnet", split="train")
-    X = torch.stack([to_tensor(img) for img in train["image"]])
+    X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in train["image"]]) # type: ignore
     Y = torch.tensor(train["label"])
 
     # Shuffle deterministically
@@ -166,7 +175,7 @@ def get_fake_cifarnet():
 
 def get_fake_cifar10():
     train = load_dataset("EleutherAI/erased-cifar10", split="train")
-    X = torch.stack([to_tensor(img) for img in train["image"]])
+    X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in train["image"]])
     Y = torch.tensor(train["label"])
 
     # Shuffle deterministically
@@ -216,6 +225,28 @@ class IdentityEraser:
         return self
 
 
+def get_alf_qleace(target_erasure=0.999, shrinkage=True):
+    state_path = Path("data") / "erasers_cache" / f"alf_qleace.pth"
+    state_path.parent.mkdir(exist_ok=True)
+    state = {} if not state_path.exists() else torch.load(state_path, weights_only=False)
+    
+    key = f'alf_qleace_{target_erasure}_s={shrinkage}'
+    if key not in state or args.nocache:
+        fitter = AlfQLeaceFitter(
+            num_features, k, dtype=dtype, device=device, shrinkage=shrinkage, target_erasure=target_erasure
+        )
+
+        Y_tensor = (F.one_hot(Y_train, k)).to(device)
+        X_tensor = X_train.flatten(1).to(device).to(dtype)
+        fitter.update(X_tensor, Y_tensor)
+
+        if args.dataset == "cifarnet":
+            fitter = fitter.to("cpu")
+
+        state[key] = fitter.eraser
+    
+    return state[key]
+
 def load_eraser(
     args: Args,
     device: str | torch.device,
@@ -230,7 +261,7 @@ def load_eraser(
 ):
     state_path = Path("data") / "erasers_cache" / f"{args.dataset}_{dtype}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
-    state = {} if not state_path.exists() else torch.load(state_path)
+    state = {} if not state_path.exists() else torch.load(state_path, weights_only=False)
 
     if args.eraser not in state or args.nocache:
         if args.eraser == "control":
@@ -303,12 +334,8 @@ if __name__ == "__main__":
         X, X_train, X_val, = normalize_dataset(X, X_train, X_val)
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
-
-    # Fit eraser on dataset and save to cache
-    state_path = Path("data") / "erasers_cache" / f"{args.dataset}_state.pth"
-    state_path.parent.mkdir(exist_ok=True)
-    state = {} if not state_path.exists() else torch.load(state_path)
-
+    
+    # eraser = get_alf_qleace(target_erasure=0.999).to(device)
     eraser = load_eraser(
         args,
         "cpu", # device if args.eraser != "leace" else "cpu",

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import torch
 from torch import nn, optim, Tensor
 import torchvision.utils as vutils
-from torchvision.transforms.v2.functional import to_tensor
 from torchvision import transforms
 from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dataset
 from concept_erasure import assert_type, groupby, optimal_linear_shrinkage
@@ -15,6 +14,13 @@ from huggingface_hub import HfApi
 import lovely_tensors as lt
 lt.monkey_patch()
 
+
+def set_seeds(seed=0):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
 
 hyperparameters = {
     "cifar10": {
@@ -224,6 +230,8 @@ def transform_dataset(args: Args):
 
 
 if __name__ == "__main__":
+    set_seeds()
+    
     parser = ArgumentParser()
     parser.add_arguments(Args, dest="args")
     args = parser.parse_args().args
