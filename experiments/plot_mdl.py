@@ -29,7 +29,12 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
 
     for file in data_path.glob("*.pth"):
         # Parse filename
-        net, act, width, depth, eraser, _ = file.stem.split("_")
+        try:
+            net, act, width, depth, eraser, directory, dataset = file.stem.split("_")
+        except ValueError:
+            print(file.stem)
+            continue
+
         width = int(width.split("=")[1])
         depth = int(depth.split("=")[1])
 
@@ -38,8 +43,11 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
         for seed, mdl_result in enumerate(data):
             if type(mdl_result) == list:
                 mdl_result = mdl_result[0]
+            if type(mdl_result) == list:
+                mdl_result = mdl_result[0]
             records.append(
                 {
+                    "dataset": dataset,
                     "net_id": net,  # to access the sweep_eraser.py hyperparameter dict
                     "net": DISPLAY_NAMES[net],
                     "act": DISPLAY_NAMES[act],

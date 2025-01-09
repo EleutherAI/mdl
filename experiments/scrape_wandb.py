@@ -12,6 +12,7 @@ DISPLAY_NAMES = {
     "convnext": "ConvNeXt",
     "swin": "Swin",
     "resmlp": "ResMLP",
+    "lenet": "LeNet",
     # erasers
     "control": "Control",
     "leace": "LEACE",
@@ -22,6 +23,11 @@ DISPLAY_NAMES = {
     "relu": "ReLU",
     "gelu": "GELU",
     "swiglu": "SwiGLU",
+    # datasets
+    "cifar-10": "CIFAR-10",
+    "cifarnet": "CIFARNet",
+    "fake-cifar10": "Erased CIFAR-10",
+    "fake-cifarnet": "Erased CIFARNet",
 }
 
 
@@ -72,10 +78,17 @@ def parse_dataset(run: Run) -> str:
     if not args:
         return ''
 
+    str_args = ' '.join(args)
     if '24-11-21' not in run.name and '24-11-19' not in run.name:
-        print(str(args))
-    
-    return 'cifarnet' if 'cifarnet' in str(args) else 'cifar10'
+        print(str_args)
+
+    if 'fake-cifar10' in str_args:
+        return 'fake-cifar10'
+    elif 'fake-cifarnet' in str_args:
+        return 'fake-cifarnet'
+    elif 'cifarnet' in str_args:
+        return 'cifarnet'
+    return 'cifar10'
 
 
 def scrape_data(filename: Path, dataset_str: str, tag: str):

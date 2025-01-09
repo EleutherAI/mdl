@@ -126,12 +126,12 @@ def plot(ols_results, filename='polyapprox_mlp_fvu'):
         fig.add_trace(go.Scatter(x=df_eraser.checkpoint, y=df_eraser.fvu, mode="lines", name=eraser), row=row, col=1)
 
     fig.update_layout(title="FVU over checkpoints")
-    fig.write_image(f"{filename}.pdf", format="pdf")
+    fig.write_image(f"data/{filename}.pdf", format="pdf")
 
 @torch.no_grad()
 def main():
     # Load each MLP checkpoint ols
-    out_path = Path("polyapprox_mlp.pth")
+    out_path = Path("data/polyapprox_mlp.pth")
     ckpts = list(Path("probe-ckpts").glob("*.pth"))
     ols_results = {} if not out_path.exists() else torch.load(out_path)
     base_shapes_path = f"mup-mlp-128-1-128.bsh"

@@ -57,13 +57,27 @@ def parse_args():
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--nocache", action="store_true")
-    parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10"), default="cifar10")
+    parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10", "fake-cifar10", "fake-cifarnet"), default="cifar10")
     parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "alf_qleace"])
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     return parser.parse_args()
 
+
 # Most to least powerful
 sweep_params = {
+    'lenet': {
+        'lr': {
+            'control': 5e-4, # Guessing
+        },
+        'b1': {
+            'control': 0.95, # Guessing
+        },
+        'mup_width': 128,
+        'mup_depth': 2,
+        # These will be converted from the MLP of this size to a parameter-matched LeNet
+        'widths': [64, 128, 256, 512, 1024, 2048],
+        'depths': [1, 2, 3, 4, 6, 8]
+    },
     'mlp': {
         'lr': {
             'control': 5e-4,
@@ -139,15 +153,11 @@ sweep_params = {
     },
 }
 
+
 def artifact_exists(width, depth, net, eraser, out, act, args):
     names = [
-        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}.pth",
-        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_24-11-19.pth"
+        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}_d={args.dataset}.pth",
     ]
-    if eraser == "alf_qleace":
-        names.append(f"{net}_{act}_h={width}_d={depth}_qleace2{'_n=' + args.normalize if args.normalize else ''}_24-12-19.pth")
-        names.append(f"{net}_{act}_h={width}_d={depth}_qleace{'_n=' + args.normalize if args.normalize else ''}_{out}.pth")
-
     return any((Path(f"/mnt/ssd-1/lucia/{out}") / name).exists() for name in names)
 
 

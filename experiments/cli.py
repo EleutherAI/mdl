@@ -3,11 +3,15 @@ from typing import TypeVar, Type, Any, cast, Literal
 from dataclasses import dataclass
 from simple_parsing import ArgumentParser
 import lovely_tensors as lt
+import os
+import pickle
+import json
 
 import wandb
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.v2 as transforms
+import torchvision.utils as vutils
 from torch import Tensor
 from torchvision.datasets import CIFAR10
 from torchvision.transforms.v2.functional import to_tensor
@@ -17,6 +21,7 @@ from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
 
+from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
 from mdl.sweep import Sweep
 from mdl.vision_probe import ConvNextProbe, VisionProbe, SwinProbe
@@ -30,7 +35,7 @@ class Args:
     out: str = "results"
 
     # Dataset options
-    dataset: Literal["cifar10", "mnist", "cifarnet", "fake-cifar10"] = "cifar10"
+    dataset: Literal["cifar10", "mnist", "cifarnet", "fake-cifar10", "fake-cifarnet"] = "cifar10"
     eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace"] = "control"
     method: Literal["leace", "orth", "none"] = "leace"
     shrinkage: bool = False
@@ -39,7 +44,7 @@ class Args:
     alf_qleace_target: float = 0.9
 
     # Model architecture
-    net: Literal["mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin"] = (
+    net: Literal["mlp", "resmlp", "resnet", "convnext", "linear", "vision", "swin", "lenet"] = (
         "mlp"
     )
     act: Literal["relu", "gelu", "swiglu"] = "relu"
@@ -80,9 +85,7 @@ def assert_type(typ: Type[T], obj: Any) -> T:
 
 
 def get_cifarnet():
-    import os
-    import pickle
-    cache_dir = 'data_cache'
+    cache_dir = 'data/cache'
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, "cifar_processed.pkl")
     if os.path.exists(cache_path):
@@ -120,7 +123,7 @@ def get_cifarnet():
 
 
 def get_cifar10(device: str | torch.device):
-    nontest = CIFAR10("/home/lucia/cifar10", download=True)
+    nontest = CIFAR10("data/cache/cifar10", download=True)
     images, labels = zip(*nontest)
 
     X = torch.stack(list(map(to_tensor, images))).to(device)
@@ -141,8 +144,28 @@ def get_cifar10(device: str | torch.device):
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
+def get_fake_cifarnet():
+    train = load_dataset("EleutherAI/erased-cifarnet", split="train")
+    X = torch.stack([to_tensor(img) for img in train["image"]])
+    Y = torch.tensor(train["label"])
+
+    # Shuffle deterministically
+    rng = torch.Generator(device=X.device).manual_seed(42)
+    perm = torch.randperm(len(X), generator=rng, device=X.device)
+    X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
+
 def get_fake_cifar10():
-    train = load_from_disk("transformed-cifar10/train")
+    train = load_dataset("EleutherAI/erased-cifar10", split="train")
     X = torch.stack([to_tensor(img) for img in train["image"]])
     Y = torch.tensor(train["label"])
 
@@ -205,7 +228,7 @@ def load_eraser(
     Y_train: Tensor,
     nowritecache: bool,
 ):
-    state_path = Path("erasers_cache") / f"{args.dataset}_{dtype}_state.pth"
+    state_path = Path("data") / "erasers_cache" / f"{args.dataset}_{dtype}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
@@ -246,6 +269,8 @@ def load_eraser(
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lt.monkey_patch()
+    Path("data").mkdir(exist_ok=True)
+    dtype = torch.float32
 
     parser = ArgumentParser()
     parser.add_arguments(Args, dest="args")
@@ -253,7 +278,7 @@ if __name__ == "__main__":
 
     # Initialize directories
     mup_path = Path("data/mup")
-    mup_path.mkdir(exist_ok=True, parents=True)
+    mup_path.mkdir(exist_ok=True)
 
     data_path = Path(
         f"/mnt/ssd-1/lucia/{args.out}"
@@ -270,24 +295,20 @@ if __name__ == "__main__":
         "cifar10": get_cifar10(device),
         "cifarnet": get_cifarnet(),
         "fake-cifar10": get_fake_cifar10(),
+        "fake-cifarnet": get_fake_cifarnet(),
     }[args.dataset]
 
     if args.normalize:
         assert args.eraser == "control"
         X, X_train, X_val, = normalize_dataset(X, X_train, X_val)
 
-    # Get std deviation scaling for each dimension on erased data
-
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
     # Fit eraser on dataset and save to cache
-    state_path = Path("erasers_cache") / f"{args.dataset}_state.pth"
+    state_path = Path("data") / "erasers_cache" / f"{args.dataset}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 
-    # ALF-QLEACE could be normalizing the variances by cutting off the top
-    dtype = torch.float32
-    # SVD is much more stable than eigh (pronounced eye gauge)
     eraser = load_eraser(
         args,
         "cpu", # device if args.eraser != "leace" else "cpu",
@@ -302,10 +323,11 @@ if __name__ == "__main__":
     ).to(device)
 
     if args.eraser != "control":
-        import torchvision.utils as vutils
-        Path('saved_images').mkdir(exist_ok=True)
+        (Path('data') / 'saved_images').mkdir(exist_ok=True)
         images = eraser.to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
         [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}_{args.eraser}.png', normalize=True) for i in range(5)]
+
+    image_size = X.shape[-1]
 
     model_cls = {
         "mlp": MlpProbe,
@@ -315,7 +337,16 @@ if __name__ == "__main__":
         "linear": LinearProbe,
         "vision": VisionProbe,
         "swin": SwinProbe,
+        "lenet": LeNetProbe,
     }[args.net]
+
+    probe_kwargs = {}
+    if args.net == "lenet":
+        with open(f'data/lenet_configs_{image_size}.json', 'r') as f: 
+            lenet_params = json.load(f)[f"{args.depth}_{args.width}"]
+
+        probe_kwargs['conv_hidden_sizes'] = lenet_params['conv_hidden_sizes']
+        probe_kwargs['fc_hidden_sizes'] = lenet_params['fc_hidden_sizes']
 
     # Prepare hyperparameter scaling factors and base shapes
     base_model = model_cls(
@@ -323,12 +354,14 @@ if __name__ == "__main__":
         num_features=num_features,
         num_layers=args.depth,  # mup depth unsupported
         hidden_size=args.mup_width if args.mup_width else args.width,
+        **probe_kwargs
     )
     delta_model = model_cls(
         num_classes=k,
         num_features=num_features,
         num_layers=args.depth,
         hidden_size=args.width,
+        **probe_kwargs
     )
 
     base_shapes_path = (
@@ -353,9 +386,9 @@ if __name__ == "__main__":
         "linear": True,
         "vision": False,
         "swin": False,
+        "lenet": False,
     }
 
-    image_size = X.shape[-1]
     padding = round(image_size * 0.125)
 
     augment = transforms.Compose(
@@ -407,6 +440,9 @@ if __name__ == "__main__":
         betas=(args.b1, 0.999),
         base_shapes_path=base_shapes_path,
     )
+    if model_cls == LeNetProbe:
+        probe_kwargs['conv_hidden_sizes'] = lenet_params['conv_hidden_sizes']
+        probe_kwargs['fc_hidden_sizes'] = lenet_params['fc_hidden_sizes']
     if model_cls == MlpProbe:
         probe_kwargs["activation"] = args.act
     if args.trial:

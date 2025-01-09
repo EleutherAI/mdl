@@ -152,7 +152,7 @@ def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
 
 def parse_args():
     parser = ArgumentParser()
-    parser.add_argument("--out", type=str, default="data/images/sweep_plots")
+    parser.add_argument("--out", type=str, default="images/sweep_plots")
     parser.add_argument("--data", type=str, default="loss_curve.csv")
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--tag", type=str, default="")
@@ -160,7 +160,11 @@ def parse_args():
 
 if __name__ == '__main__':
     args = parse_args()
-    data, out = Path(f'{args.tag + "_" if args.tag else ""}{args.data}'), Path(args.out)
+    
+    data_path = Path('data')
+    
+    data = data_path / f'{args.tag + "_" if args.tag else ""}{args.data}'
+    out = data_path / args.out
 
     scrape_data(data, args.dataset, args.tag)
 

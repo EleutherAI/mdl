@@ -31,7 +31,7 @@ if __name__ == "__main__":
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
 
     # Populate eraser cache using training data
-    state_path = Path("erasers_cache") / f"{args.dataset}_state.pth"
+    state_path = Path("data") / "erasers_cache" / f"{args.dataset}_state.pth"
     state_path.parent.mkdir(exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path)
 

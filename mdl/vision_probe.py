@@ -1,3 +1,4 @@
+import math
 import torch
 import torchvision as tv
 from torch import Tensor, nn, optim
@@ -101,7 +102,6 @@ class ConvNextProbe(Probe):
             base_shapes_path: str | None = None,
             **kwargs
         ):
-        assert num_features == 3 * 32 * 32
         super().__init__(num_features, num_classes, device, dtype)
 
         self.learning_rate = learning_rate
@@ -113,9 +113,11 @@ class ConvNextProbe(Probe):
         depths = [depth * num_layers for depth in depths]
 
         hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, 4)]
+
+        image_size = int(math.sqrt(num_features // 3))
         
         cfg = ConvNextV2Config(
-                image_size=32,
+                image_size=image_size,
                 num_channels=3,
                 depths=depths,
                 drop_path_rate=0.1,
