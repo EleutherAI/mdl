@@ -124,3 +124,11 @@ if __name__ == "__main__":
         ]).max()
         print("Max covariance difference from barycenter norm", max_diff_from_cov_center.item())
         print("Max covariance difference from barycenter pixel", max_pixel_diff_from_cov_center.item())
+
+        # Average std of each pixel across the unerased data
+        unerased_std = X_train.std(dim=0).mean()
+        print(f"Unerased std: {unerased_std:.2f}")
+
+        # Average std of each pixel across the erased data
+        std = erased_data.std(dim=0).mean()
+        print(f"{eraser_str} std: {std:.2f}")

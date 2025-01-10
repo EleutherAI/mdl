@@ -7,10 +7,10 @@ from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
 from torch import Tensor
-from tqdm.auto import tqdm
 import lovely_tensors as lt
+import plotly.express as px
 
-from experiments.cli import get_cifar10, get_cifarnet, IdentityEraser, load_eraser
+from experiments.cli import get_cifar10, get_cifarnet, IdentityEraser
 
 
 if __name__ == "__main__":
@@ -70,140 +70,40 @@ if __name__ == "__main__":
     eraser = state[args.eraser]
 
 
-    for eraser_str in ('leace', 'alf_qleace'):
-        eraser = state[eraser_str]
-
-        erased = eraser.to('cuda')(X_train.cuda().reshape(len(X_train), -1)).reshape(X_train.shape)
-        class_means = [erased[Y_train == c].mean(0) for c in Y_train.unique()]
-    
-        universal_mean = torch.stack(class_means).mean(0)
-        diffs_from_global_mean = [class_mean - torch.stack(class_means).mean(0) for class_mean in class_means]
-        print(f"Class mean diffs from global mean after {eraser_str} erasure:", diffs_from_global_mean)
-
-        max_mean_diff = torch.stack([
-            (universal_mean - other_mean).flatten().norm()
-            for other_mean in class_means
-        ]).max()
-        max_pixel_diff = torch.stack([
-            (universal_mean - other_mean).flatten().abs().max()
-            for other_mean in class_means
-        ]).max()
-        print("Max difference norm", max_mean_diff)
-        print("Max pixel difference", max_pixel_diff)
-
-        # universal_covariance = torch.cov(erased.flatten(1).T)
-        # print("Universal covariance:", universal_covariance)
-
-        class_covariances = [erased[Y_train == c].flatten(1).T.cov() for c in Y_train.unique()]
-        max_diff_between_any_two_covariances = torch.stack([
-            (class_covariances[i] - class_covariances[j]).flatten().norm()
-            for i in range(len(class_covariances))
-            for j in range(i + 1, len(class_covariances))
-        ]).max()
-        max_pixel_diff_between_any_two_covariances = torch.stack([
-            (class_covariances[i] - class_covariances[j]).flatten().abs().max()
-            for i in range(len(class_covariances))
-            for j in range(i + 1, len(class_covariances))
-        ]).max()
-        # max_covariance_diff = torch.stack([
-        #     (universal_covariance - other_covariance).flatten().norm()
-        #     for other_covariance in class_covariances
-        # ]).max()
-
-        # Print covariance traces
-        print(f"Max covariance difference norm for {eraser_str}", max_diff_between_any_two_covariances)
-        print(f"Max covariance difference pixel for {eraser_str}", max_pixel_diff_between_any_two_covariances)
-
-        # leace_eraser = state["leace"]
-        # leace_erased: Tensor = leace_eraser.to(X_train.device)(X_train.reshape(len(X_train), -1)).reshape(X_train.shape)
-
-        # leace_class_means = [leace_erased[Y_train == c].mean(0) for c in Y_train.unique()]
-        # leace_universal_mean = torch.stack(leace_class_means).mean(0)
-        # leace_max_mean_diff = torch.stack([
-        #     (leace_universal_mean - other_mean).flatten().norm()
-        #     for other_mean in leace_class_means
-        # ]).max()
-        # leace_max_pixel_diff = torch.stack([
-        #     (leace_universal_mean - other_mean).flatten().abs().max()
-        #     for other_mean in leace_class_means
-        # ]).max()
-        # print("Max LEACE difference norm", leace_max_mean_diff)
-        # print("Max LEACE pixel difference", leace_max_pixel_diff)
-
-        # leace_universal_covariance = torch.cov(leace_erased.flatten(1).T)
-        # print("LEACE universal covariance:", leace_universal_covariance)
-
-        # leace_class_covariances = [leace_erased[Y_train == c].flatten(1).T.cov() for c in Y_train.unique()]
-        # leace_max_covariance_diff = torch.stack([
-        #     (leace_universal_covariance - other_covariance).flatten().norm()
-        #     for other_covariance in leace_class_covariances
-        # ]).max()
-        # leace_max_diff_between_any_two_covariances = torch.stack([
-        #     (leace_class_covariances[i] - leace_class_covariances[j]).flatten().norm()
-        #     for i in range(len(leace_class_covariances))
-        #     for j in range(i + 1, len(leace_class_covariances))
-        # ]).max()
-        # leace_max_pixel_diff_between_any_two_covariances = torch.stack([
-        #     (leace_class_covariances[i] - leace_class_covariances[j]).flatten().abs().max()
-        #     for i in range(len(leace_class_covariances))
-        #     for j in range(i + 1, len(leace_class_covariances))
-        # ]).max()
-
-        # print("Max LEACE covariance difference norm", leace_max_diff_between_any_two_covariances)
-        # print("Max LEACE covariance difference pixel", leace_max_pixel_diff_between_any_two_covariances)
-
-        # Cov traces
-
-        # 190.42 CIFAR-10
-        unerased_cov = X_train.flatten(1).T.cov()
-        print(f"Unerased Cov trace: {unerased_cov.trace().item():.2f}") 
-        # 135.79 CIFAR-10
-        # leace_cov = leace_erased.flatten(1).T.cov()
-        # print(f"LEACE Cov trace: {leace_cov.trace().item():.2f}") 
-        # 24.79 CIFAR-10
-        cov = erased.flatten(1).T.cov()
-        print(f"{eraser_str} Cov trace: {cov.trace().item():.2f}") 
-
-        # Unerased eigenvalues spectrum of covariance
-        # SVD of centered data, singular values = square roots of eigenvalues of covariance matrix
-        # SVD on covariance matrix, identical to eigenvalues
-
-        # unerased_eigenvals = torch.linalg.eigvalsh(unerased_cov)
-        # unerased_flipped = torch.cat((torch.tensor([1], device=unerased_eigenvals.device), unerased_eigenvals.flip(dims=(0,))))
-        # qleace_eigenvals = torch.linalg.eigvalsh(cov)
-        # qleace_flipped = torch.cat((torch.tensor([1], device=qleace_eigenvals.device), qleace_eigenvals.flip(dims=(0,))))
-        # # leace_eigenvals = torch.linalg.eigvalsh(leace_cov)
-        # # leace_flipped = torch.cat((torch.tensor([1], device=leace_eigenvals.device), leace_eigenvals.flip(dims=(0,))))
-
-        # all_flipped = torch.cat([unerased_flipped, qleace_flipped, leace_flipped])
-        # global_min = torch.log(torch.min(all_flipped)).cpu()
-        # global_max = torch.log(torch.max(all_flipped)).cpu()
-
-
-        # fig = px.line(x=range(len(unerased_flipped)), y=unerased_flipped.cpu(), title="Unerased data covariance eigenvalues spectrum", log_x=True, log_y=True)
-        # fig.update_layout(xaxis_title="Reversed eigenvalue index", yaxis_title="Eigenvalue", yaxis_range=[global_min, global_max])
-        # fig.write_image("svd_unerased.png")
-
-        # # QLEACE eigenvalues spectrum
+    # Unerased SVD
+    def get_flipped_eigenvalues(data: Tensor, log=True):
+        if not log:
+            raise NotImplementedError("Only log scale is supported")
         
-        # fig = px.line(x=range(len(qleace_flipped)), y=qleace_flipped.cpu(), title="QLEACE data covariance eigenvalues spectrum", log_x=True, log_y=True)
-        # fig.update_layout(xaxis_title="Reversed eigenvalue index", yaxis_title="Eigenvalue", yaxis_range=[global_min, global_max])
-        # fig.write_image("svd_qleace.png")
+        cov = data.flatten(1).T.cov()
+        eigenvals = torch.linalg.eigvalsh(cov)
+        
+        # Add 1 to allow log scale
+        return torch.cat((torch.tensor([1], device=eigenvals.device), eigenvals.flip(dims=(0,))))
 
-        # # LEACE eigenvalues spectrum
-        # leace_fig = px.line(x=range(len(leace_flipped)), y=leace_flipped.cpu(), title="LEACE data covariance eigenvalues spectrum", log_x=True, log_y=True)
-        # leace_fig.update_layout(xaxis_title="Reversed eigenvalue index", yaxis_title="Eigenvalue", yaxis_range=[global_min, global_max])
-        # leace_fig.write_image("svd_leace.png")
+    # SVD of centered data, singular values = square roots of eigenvalues of covariance matrix
+    # SVD on covariance matrix, identical to eigenvalues
 
+    # Eigenvalues of data covariance
+    flipped_eigenvalues = {
+        'control': get_flipped_eigenvalues(X_train, log=True).cpu()
+    }
+    
+    for eraser_str in ('leace', 'qleace', 'alf_qleace'):
+        eraser = state[eraser_str].to('cuda')
+        erased = (
+            eraser(X_train.cuda().flatten(1), Y_train)
+            if eraser_str == "qleace"
+            else eraser(X_train.flatten(1)).reshape(X_train.shape)
+        )
 
-        # Average std of each pixel across the unerased data
-        unerased_std = X_train.std(dim=0).mean()
-        print(f"Unerased std: {unerased_std:.2f}")
+        flipped_eigenvalues[eraser_str] = get_flipped_eigenvalues(erased, log=True).cpu()
 
-        # Average std of each pixel across the QLEACE data
-        std = erased.std(dim=0).mean()
-        print(f"{eraser_str} std: {std:.2f}")
+    all_flipped = torch.cat(list(flipped_eigenvalues.values()))
+    global_min = torch.log(torch.min(all_flipped)).item()
+    global_max = torch.log(torch.max(all_flipped)).item()
 
-        # # Average std of each pixel across the LEACE data
-        # leace_std = leace_erased.std(dim=0).mean()
-        # print(f"LEACE std: {leace_std:.2f}")
+    for eraser_str, erased_flipped in flipped_eigenvalues.items():
+        fig = px.line(x=range(len(erased_flipped)), y=erased_flipped, title=f"{eraser_str} data covariance eigenvalues spectrum", log_x=True, log_y=True)
+        fig.update_layout(xaxis_title="Reversed eigenvalue index", yaxis_title="Eigenvalue", yaxis_range=[global_min, global_max])
+        fig.write_image(f"svd_{eraser_str}.png")
