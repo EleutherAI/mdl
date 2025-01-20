@@ -78,7 +78,9 @@ class LeNetProbe(Probe):
             fc_hidden_sizes: list[int] | None = None,
             **kwargs
         ):
-        print("Single probe size being used, input size ignored")
+        if not conv_hidden_sizes and not fc_hidden_sizes:
+            print("Single probe size being used, input size ignored. Provide conv_hidden_sizes and fc_hidden_sizes.")
+            
         super().__init__(num_features, num_classes, device, dtype)
 
         self.learning_rate = learning_rate

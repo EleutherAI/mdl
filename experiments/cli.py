@@ -20,6 +20,7 @@ from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
+from concept_erasure.re import RandomEraser
 
 from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
@@ -35,8 +36,8 @@ class Args:
     out: str = "results"
 
     # Dataset options
-    dataset: Literal["cifar10", "mnist", "cifarnet", "fake-cifar10", "fake-cifarnet"] = "cifar10"
-    eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace"] = "control"
+    dataset: Literal["cifar10", "cifarnet", "fake-cifar10", "fake-cifarnet", "svhn", "fake-svhn"] = "cifar10"
+    eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace", "random"] = "control"
     method: Literal["leace", "orth", "none"] = "leace"
     shrinkage: bool = False
     normalize: bool = False
@@ -84,10 +85,10 @@ def assert_type(typ: Type[T], obj: Any) -> T:
     return cast(typ, obj)
 
 
-def get_cifarnet():
+def get_cifarnet(shuffle=True):
     cache_dir = 'data/cache'
     os.makedirs(cache_dir, exist_ok=True)
-    cache_path = os.path.join(cache_dir, "cifar_processed.pkl")
+    cache_path = os.path.join(cache_dir, f"cifar_processed{'_unshuffled' if not shuffle else ''}.pkl")
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             return pickle.load(f)
@@ -107,10 +108,10 @@ def get_cifarnet():
     X = assert_type(Tensor, nontest["input_ids"])
     Y = assert_type(Tensor, nontest["label"])
 
-    # Shuffle deterministically
-    rng = torch.Generator(device=X.device).manual_seed(42)
-    perm = torch.randperm(len(X), generator=rng, device=X.device)
-    X, Y = X[perm], Y[perm]
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
 
     # Get number of classes
     k = int(Y.max()) + 1
@@ -126,7 +127,7 @@ def get_cifarnet():
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
-def get_cifar10(device: str | torch.device):
+def get_cifar10(device: str | torch.device, shuffle=True):
     nontest = CIFAR10("data/cache/cifar10", download=True)
     images, labels = zip(*nontest)
 
@@ -139,9 +140,10 @@ def get_cifar10(device: str | torch.device):
     Y = torch.tensor(labels).to(device)
 
     # Shuffle deterministically
-    rng = torch.Generator(device=X.device).manual_seed(42)
-    perm = torch.randperm(len(X), generator=rng, device=X.device)
-    X, Y = X[perm], Y[perm]
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
 
     k = int(Y.max()) + 1
 
@@ -153,15 +155,15 @@ def get_cifar10(device: str | torch.device):
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
-def get_fake_cifarnet():
+def get_fake_cifarnet(shuffle=True):
     train = load_dataset("EleutherAI/erased-cifarnet", split="train")
     X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in train["image"]]) # type: ignore
     Y = torch.tensor(train["label"])
 
-    # Shuffle deterministically
-    rng = torch.Generator(device=X.device).manual_seed(42)
-    perm = torch.randperm(len(X), generator=rng, device=X.device)
-    X, Y = X[perm], Y[perm]
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
 
     k = int(Y.max()) + 1
 
@@ -173,15 +175,15 @@ def get_fake_cifarnet():
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
-def get_fake_cifar10():
+def get_fake_cifar10(shuffle=True):
     train = load_dataset("EleutherAI/erased-cifar10", split="train")
     X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in train["image"]])
     Y = torch.tensor(train["label"])
 
-    # Shuffle deterministically
-    rng = torch.Generator(device=X.device).manual_seed(42)
-    perm = torch.randperm(len(X), generator=rng, device=X.device)
-    X, Y = X[perm], Y[perm]
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
 
     k = int(Y.max()) + 1
 
@@ -192,6 +194,47 @@ def get_fake_cifar10():
 
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
+
+def get_svhn(device, shuffle=True):
+    data = load_dataset("ufldl-stanford/svhn", 'cropped_digits', split='train')
+    X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in data["image"]])
+    Y = torch.tensor(data["label"])
+
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
+
+def get_fake_svhn(shuffle=True):
+    data = load_dataset("EleutherAI/erased-svhn", split="train")
+    X = torch.stack([to_dtype(to_image(img), dtype=torch.float32, scale=True) for img in data["image"]])
+    Y = torch.tensor(data["label"])
+
+    if shuffle:
+        rng = torch.Generator(device=X.device).manual_seed(42)
+        perm = torch.randperm(len(X), generator=rng, device=X.device)
+        X, Y = X[perm], Y[perm]
+
+    k = int(Y.max()) + 1
+
+    # Split train and validation
+    val_size = 1024
+    X_train, X_val = X[:-val_size], X[-val_size:]
+    Y_train, Y_val = Y[:-val_size], Y[-val_size:]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
+    
 def normalize_dataset(
     X: Tensor, X_train: Tensor, X_val: Tensor
 ) -> tuple[Tensor, Tensor, Tensor]:
@@ -225,76 +268,72 @@ class IdentityEraser:
         return self
 
 
-def get_alf_qleace(target_erasure=0.999, shrinkage=True):
-    state_path = Path("data") / "erasers_cache" / f"alf_qleace.pth"
-    state_path.parent.mkdir(exist_ok=True)
-    state = {} if not state_path.exists() else torch.load(state_path, weights_only=False)
-    
-    key = f'alf_qleace_{target_erasure}_s={shrinkage}'
-    if key not in state or args.nocache:
-        fitter = AlfQLeaceFitter(
-            num_features, k, dtype=dtype, device=device, shrinkage=shrinkage, target_erasure=target_erasure
-        )
-
-        Y_tensor = (F.one_hot(Y_train, k)).to(device)
-        X_tensor = X_train.flatten(1).to(device).to(dtype)
-        fitter.update(X_tensor, Y_tensor)
-
-        if args.dataset == "cifarnet":
-            fitter = fitter.to("cpu")
-
-        state[key] = fitter.eraser
-    
-    return state[key]
+def get_cache_key(dataset_str, eraser_str, dtype, method, shrinkage, alf_qleace_target, random_erase_dims):
+    if eraser_str == 'alf_qleace':
+        return f"{eraser_str}_{dataset_str}_{dtype}_{method}_{shrinkage}_{alf_qleace_target}"
+    elif eraser_str == 'leace':
+        return f"{eraser_str}_{dataset_str}_{dtype}_{method}_{shrinkage}"
+    elif eraser_str == 'qleace':
+        return f"{eraser_str}_{dataset_str}_{dtype}"
+    elif eraser_str == 'control':
+        return f"{eraser_str}"
+    elif eraser_str == 'random':
+        return f"{eraser_str}_{dataset_str}_{random_erase_dims}"
+    else:
+        raise ValueError(f"Unknown eraser: {eraser_str}")
+        
 
 def load_eraser(
-    args: Args,
-    device: str | torch.device,
-    fit_device: str | torch.device,
+    eraser_str: str,
+    dataset_str: str,
     dtype: torch.dtype,
     method: str,
     shrinkage: bool,
     alf_qleace_target: float | None,
     X_train: Tensor,
     Y_train: Tensor,
+    num_features: int,
+    k: int,
     nowritecache: bool,
+    nocache: bool = False,
+    device: str | torch.device = "cpu",
+    fit_device: str | torch.device = "cpu",
+    random_erase_dims=300
 ):
-    state_path = Path("data") / "erasers_cache" / f"{args.dataset}_{dtype}_state.pth"
-    state_path.parent.mkdir(exist_ok=True)
+    state_path = Path("data") / "erasers_cache" / "state.pth"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path, weights_only=False)
 
-    if args.eraser not in state or args.nocache:
-        if args.eraser == "control":
-            state[args.eraser] = IdentityEraser()
-        else:
-            cls = {
-                "leace": LeaceFitter,
-                "qleace": QuadraticFitter,
-                "alf_qleace": AlfQLeaceFitter,
-            }[args.eraser]
+    cache_key = get_cache_key(dataset_str, eraser_str, dtype, method, shrinkage, alf_qleace_target, random_erase_dims)
 
-            if args.eraser == "leace":
-                fitter = cls(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
-            elif args.eraser == "alf_qleace":
-                fitter = cls(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage, target_erasure=alf_qleace_target)
+    if cache_key not in state or nocache:
+        if eraser_str == "control":
+            state[cache_key] = IdentityEraser()
+        elif eraser_str == "random":
+            state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
+        else:
+            if eraser_str == "leace":
+                fitter = LeaceFitter(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
+            elif eraser_str == "alf_qleace":
+                fitter = AlfQLeaceFitter(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage, target_erasure=alf_qleace_target)
             else:
-                fitter = cls(num_features, k, dtype=dtype, device=device)
+                fitter = QuadraticFitter(num_features, k, dtype=dtype, device=device)
 
             Y_tensor = (
                 F.one_hot(Y_train, k)
-                if args.eraser != "qleace"
+                if eraser_str != "qleace"
                 else Y_train
             ).to(device)
             X_tensor = X_train.flatten(1).to(device).to(dtype)
             fitter.update(X_tensor, Y_tensor)
             fitter = fitter.to(fit_device)
             
-            state[args.eraser] = fitter.eraser
+            state[cache_key] = fitter.eraser
+
         if not nowritecache:
             torch.save(state, state_path)
 
-    return state[args.eraser]
-
+    return state[cache_key]
 
 
 if __name__ == "__main__":
@@ -327,6 +366,8 @@ if __name__ == "__main__":
         "cifarnet": get_cifarnet(),
         "fake-cifar10": get_fake_cifar10(),
         "fake-cifarnet": get_fake_cifarnet(),
+        "svhn": get_svhn(device),
+        "fake-svhn": get_fake_svhn(),
     }[args.dataset]
 
     if args.normalize:
@@ -335,24 +376,22 @@ if __name__ == "__main__":
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
     
-    # eraser = get_alf_qleace(target_erasure=0.999).to(device)
     eraser = load_eraser(
-        args,
-        "cpu", # device if args.eraser != "leace" else "cpu",
-        device if args.dataset != "cifarnet" else "cpu",
+        args.eraser,
+        args.dataset,
         dtype if args.eraser != "leace" else torch.float64,
         args.method,
         args.shrinkage,
         args.alf_qleace_target,
         X_train,
         Y_train,
+        num_features,
+        k,
         args.nowritecache,
+        args.nocache,
+        "cpu",
+        device if args.dataset != "cifarnet" else "cpu",
     ).to(device)
-
-    if args.eraser != "control":
-        (Path('data') / 'saved_images').mkdir(exist_ok=True)
-        images = eraser.to("cpu")(X_train[:5].flatten(1)).reshape_as(X_train[:5])
-        [vutils.save_image(images[i], f'saved_images/image_{i}_90%_{args.dataset}_{args.eraser}.png', normalize=True) for i in range(5)]
 
     image_size = X.shape[-1]
 

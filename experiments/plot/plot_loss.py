@@ -113,23 +113,41 @@ def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
                             (df['width'] == width) & 
                             (df['depth'] == depth)
                         ]
+                        data = data.sort_values("step")
 
                         mean_data = data.groupby(["step"])["loss"].agg(["mean", "std"]).reset_index()
+                        mean_data = mean_data.sort_values("step")
 
-                        # Plot individual runs as scattered points
-                        fig.add_trace(
-                            go.Scatter(
-                                x=data["step"],
-                                y=data["loss"],
-                                mode="markers",
-                                marker=dict(color=colors[eraser_idx], size=5, opacity=0.3),
-                                name=f"{eraser} (seeds)",
-                                showlegend=False,
-                                legendgroup=eraser,
-                            ),
-                            row=row,
-                            col=col,
-                        )
+                        # Plot individual runs as transparent lines
+                        for seed in data["seed"].unique():
+                            seed_data = data[data["seed"] == seed]
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=seed_data["step"],
+                                    y=seed_data["loss"],
+                                    mode="lines",
+                                    marker=dict(color=colors[eraser_idx], size=5),
+                                    opacity=0.3,
+                                    name=f"{eraser} (seeds)",
+                                    showlegend=False,
+                                    legendgroup=eraser,
+                                ),
+                                row=row,
+                                col=col,
+                            )
+                        # fig.add_trace(
+                        #     go.Scatter(
+                        #         x=data["step"],
+                        #         y=data["loss"],
+                        #         mode="lines+markers",
+                        #         marker=dict(color=colors[eraser_idx], size=5, opacity=0.3),
+                        #         name=f"{eraser} (seeds)",
+                        #         showlegend=False,
+                        #         legendgroup=eraser,
+                        #     ),
+                        #     row=row,
+                        #     col=col,
+                        # )
 
                         # Plot mean as a line
                         fig.add_trace(
@@ -155,6 +173,7 @@ def parse_args():
     parser.add_argument("--out", type=str, default="images/sweep_plots")
     parser.add_argument("--data", type=str, default="loss_curve.csv")
     parser.add_argument("--dataset", type=str, default="cifar10")
+    parser.add_argument("--scrape", action="store_true")
     parser.add_argument("--tag", type=str, default="")
     return parser.parse_args()
 
@@ -166,7 +185,8 @@ if __name__ == '__main__':
     data = data_path / f'{args.tag + "_" if args.tag else ""}{args.data}'
     out = data_path / args.out
 
-    scrape_data(data, args.dataset, args.tag)
+    if args.scrape:
+        scrape_data(data, args.dataset, args.tag)
 
     df = pd.read_csv(data)
     plot_data(df, out, args.dataset, args.tag)

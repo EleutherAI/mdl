@@ -70,7 +70,7 @@ def calculate_fvu(model: nn.Module, approx_model: QuadraticModel | LinearModel,
     return mse / var
 
 
-def normalize_cifar10(X, X_train, X_val, X_test):
+def normalize_cifar10(X, X_train, X_val):
     X_flat = X.reshape(X.shape[0], -1)
     
     mean = X_flat.mean(dim=0, keepdim=True)
@@ -90,9 +90,8 @@ def normalize_cifar10(X, X_train, X_val, X_test):
     X = normalize_data(X)
     X_train = normalize_data(X_train)
     X_val = normalize_data(X_val)
-    X_test = normalize_data(X_test)
 
-    return X, X_train, X_val, X_test
+    return X, X_train, X_val
 
 
 def prepare_random_data(n_samples: int, input_dim: int) -> torch.utils.data.DataLoader:
@@ -140,8 +139,8 @@ def main():
     )
 
     n_samples, input_dim = 10_000, 32 * 32 * 3
-    (X_train, Y_train, X_val, Y_val, X_test, Y_test, k, X, Y) = get_cifar10(device="cpu")
-    X, X_train, X_val, X_test = normalize_cifar10(X, X_train, X_val, X_test)
+    (X_train, Y_train, X_val, Y_val, k, X, Y) = get_cifar10(device="cpu")
+    X, X_train, X_val = normalize_cifar10(X, X_train, X_val)
 
     X_d = X.shape[1] * X.shape[2] * X.shape[3]
     cifar10_dataloader = torch.utils.data.DataLoader(X_train[:n_samples].flatten(1), batch_size=100, shuffle=True)

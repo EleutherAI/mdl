@@ -169,3 +169,4 @@ images/
 
 probe-ckpts/
 *.bsh
+wandb*

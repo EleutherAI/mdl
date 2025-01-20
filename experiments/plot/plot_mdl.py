@@ -77,6 +77,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
     ordered_erasers = [eraser for eraser in ordered_erasers if eraser in df["eraser"].unique()]
 
     df = df.sort_values(["depth", "width"])
+    df = df[df["dataset"] == dataset]
 
     for net_id in df["net_id"].unique():
         net = DISPLAY_NAMES[net_id]
@@ -145,6 +146,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
                 ]
                 if data.empty:
                     continue
+
                 mean_data = (
                     data.groupby(["width", "depth"])["mdl"]
                     .agg(["mean", "std"])
@@ -153,6 +155,8 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
                 seed_depth_data = data[data["width"] == reference_width]
                 mean_depth_data = mean_data[mean_data["width"] == reference_width]
+                # seed_depth_data = seed_depth_data.sort_values("depth")
+                # mean_depth_data = mean_depth_data.sort_values("depth")
 
                 fig.add_trace(
                     go.Scatter(
@@ -251,7 +255,7 @@ def main():
     args = parse_args()
 
     if args.dataset == "cifar10":
-        print("Prevent user error; dataset awkwardly not in results metadata")
+        print("Assertion to prevent user error; dataset awkwardly not always in results metadata")
         assert "cifarnet" not in args.data.name
 
     print("Loading disk data into dataframe...")

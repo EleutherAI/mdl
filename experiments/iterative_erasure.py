@@ -10,8 +10,12 @@ from datasets import ClassLabel, Dataset, DatasetDict, Features, Image, load_dat
 from concept_erasure import assert_type, groupby, optimal_linear_shrinkage
 from PIL import Image as PilImage
 from huggingface_hub import HfApi
-
 import lovely_tensors as lt
+
+from experiments.cli import get_cifar10
+from torchvision.datasets import CIFAR10
+from torchvision.transforms.v2.functional import to_dtype, to_image
+
 lt.monkey_patch()
 
 
@@ -32,7 +36,12 @@ hyperparameters = {
         "mse_weight": 1e-9,
         "cov_weight": 0.5,
         "mean_weight": 1.,
-    }
+    },
+    "svhn": {
+        "mse_weight": 1.,
+        "cov_weight": 0.01,
+        "mean_weight": 0.01,
+    },
 }
 
 @dataclass
@@ -118,6 +127,25 @@ def transform_dataset(args: Args):
     def process_split(split: str):
         if args.dataset == "cifarnet":
             ds = assert_type(Dataset, load_dataset(f"EleutherAI/{args.dataset}", split=split))
+        elif args.dataset == "cifar10":
+            if split == 'test':
+                data = CIFAR10("data/cache/cifar10-test", download=True, train=False)
+            else:
+                print("matched cifar10")
+                exit(0)
+                data = CIFAR10("data/cache/cifar10", download=True)
+            images, labels = zip(*data)
+            X = torch.stack([
+                to_dtype(to_image(item), dtype=torch.float32, scale=True) 
+                for item in images
+            ]).to('cuda')
+            Y = torch.tensor(labels).to('cuda')
+            ds = Dataset.from_dict({
+                "image": X * 255,
+                "label": Y
+            })
+        elif args.dataset == "svhn":
+            ds = assert_type(Dataset, load_dataset("ufldl-stanford/svhn", "cropped_digits", split=split))
         else:
             ds = assert_type(Dataset, load_dataset(args.dataset, split=split))
 
@@ -240,6 +268,9 @@ if __name__ == "__main__":
     args.mean_weight = args.mean_weight or hyperparameters[args.dataset]["mean_weight"]
 
     transformed = transform_dataset(args)
+
+    # Save to disk
+    # transformed.save_to_disk("data/eraser-order-cifar10")
 
     # Upload to hub
     api = HfApi()

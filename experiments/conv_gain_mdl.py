@@ -54,6 +54,22 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
         (reference_width, depth) for depth in sweep_params["mlp"]["depths"]
     ]
 
+    def diff_of_diffs(lenet_unerased_loss, lenet_erased_loss, mlp_unerased_loss, mlp_erased_loss):
+                    # unerased_conv_gain = lenet_unerased_loss / mlp_unerased_loss
+        # erased_conv_gain = lenet_erased_loss / mlp_erased_loss
+        # print(f"lenet_unerased_loss {lenet_unerased_loss}, lenet_erased_loss {lenet_erased_loss}, mlp_unerased_loss {mlp_unerased_loss} mlp_erased_loss {mlp_erased_loss}")
+        # print(f"Conv gain: {unerased_conv_gain:.2f} -> {erased_conv_gain:.2f} ({erased_conv_gain / unerased_conv_gain:.2f}x)")
+        # print(f"Differences, unerased ", mlp_unerased_loss - lenet_unerased_loss, "difference, erased:", mlp_erased_loss - lenet_erased_loss)
+        # print("Difference of differences", (mlp_erased_loss - lenet_erased_loss) - (mlp_unerased_loss - lenet_unerased_loss)) # how much loss you lose switching to lenet on unerased - how much loss you loss switching to lenet on erased
+        # return erased_conv_gain  - unerased_conv_gain
+
+        """The amount adding a convolution improves the loss on erased dataset - the same thing for the vanilla dataset """
+        return (mlp_erased_loss - lenet_erased_loss) - (mlp_unerased_loss - lenet_unerased_loss)
+
+    def diff_of_diffs_2(lenet_unerased_loss, lenet_erased_loss, mlp_unerased_loss, mlp_erased_loss):
+        """The amount using erased data increases the loss with MLP - the same thing with convolutions"""
+        return (mlp_erased_loss - mlp_unerased_loss) - (lenet_erased_loss - lenet_unerased_loss)
+
     # Create separate plot for each activation function
     def interleave(list1, list2) -> list:
         from itertools import chain
@@ -86,7 +102,9 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
     # )
 
     # # Match y-axes across subplots
-    # fig.update_yaxes(matches="y1")
+    # fig.update_yaxes(matches="y1") 
+    # 
+    #    
 
     for col, item in enumerate([width_depths, widths_depth], 1):
         for row, (width, depth) in enumerate(item, 1):
@@ -121,7 +139,15 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
                     (df['width'] == width) & 
                     (df['depth'] == depth)
                 ]
-                erased_mlp_df = df[
+                leace_mlp_df = df[
+                    (df["dataset"] == dataset) &
+                    (df["net_id"] == "mlp") &
+                    (df["eraser"] == "LEACE") & 
+                    (df["act"] == act) & 
+                    (df['width'] == width) & 
+                    (df['depth'] == depth)
+                ]
+                fake_data_mlp_df = df[
                     (df["dataset"] == f"fake-{dataset}") &
                     (df["net_id"] == "mlp") &
                     (df["eraser"] == "Control") & 
@@ -138,7 +164,15 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
                     (df['width'] == width) & 
                     (df['depth'] == depth)
                 ]
-                erased_lenet_df = df[
+                leace_lenet_df = df[
+                    (df["dataset"] == dataset) &
+                    (df["net_id"] == "lenet") &
+                    (df["eraser"] == "LEACE") & 
+                    (df["act"] == act) & 
+                    (df['width'] == width) & 
+                    (df['depth'] == depth)
+                ]
+                fake_data_lenet_df = df[
                     (df["dataset"] == f"fake-{dataset}") &
                     (df["net_id"] == "lenet") &
                     (df["eraser"] == "Control") & 
@@ -147,32 +181,46 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
                     (df['depth'] == depth)
                 ]
 
-                if unerased_lenet_df.empty or erased_lenet_df.empty or unerased_mlp_df.empty or erased_mlp_df.empty:
+                if unerased_lenet_df.empty or fake_data_lenet_df.empty or unerased_mlp_df.empty or fake_data_mlp_df.empty:
                     print(width, depth, dataset)
-                    print(unerased_lenet_df.empty, erased_lenet_df.empty, unerased_mlp_df.empty, erased_mlp_df.empty)
+                    print(unerased_lenet_df.empty, fake_data_lenet_df.empty, unerased_mlp_df.empty, fake_data_mlp_df.empty)
                     continue
 
                 unerased_mean_mlp_mdl = unerased_mlp_df['mdl'].mean()
                 unerased_mean_lenet_mdl = unerased_lenet_df['mdl'].mean()
 
-                erased_mean_mlp_mdl = erased_mlp_df['mdl'].mean()
-                erased_mean_lenet_mdl = erased_lenet_df['mdl'].mean()
+                # breakpoint()
+                if leace_lenet_df.empty:
+                    print("leaced_mean_lenet_mdl is empty")
+                    continue
+                if leace_mlp_df.empty:
+                    print("leaced_mean_mlp_mdl is empty")
+                    continue
+                leaced_mean_mlp_mdl = leace_mlp_df['mdl'].mean()
+                
+                leaced_mean_lenet_mdl = leace_lenet_df['mdl'].mean()
+                
+
+                erased_mean_mlp_mdl = fake_data_mlp_df['mdl'].mean()
+                erased_mean_lenet_mdl = fake_data_lenet_df['mdl'].mean()
 
                 # all_dfs = ["cifar10", "cifarnet", "fake-cifar10", "fake-cifarnet"]
 
                 print("width = ", width, "depth = ", depth)
 
-                def ratio_diff(lenet_unerased_loss, lenet_erased_loss, mlp_unerased_loss, mlp_erased_loss):
-                    # unerased_conv_gain = lenet_unerased_loss / mlp_unerased_loss
-                    # erased_conv_gain = lenet_erased_loss / mlp_erased_loss
-                    print(f"lenet_unerased_loss {lenet_unerased_loss}, lenet_erased_loss {lenet_erased_loss}, mlp_unerased_loss {mlp_unerased_loss} mlp_erased_loss {mlp_erased_loss}")
-                    # print(f"Conv gain: {unerased_conv_gain:.2f} -> {erased_conv_gain:.2f} ({erased_conv_gain / unerased_conv_gain:.2f}x)")
-                    print(f"Differences, unerased ", mlp_unerased_loss - lenet_unerased_loss, "difference, erased:", mlp_erased_loss - lenet_erased_loss)
-                    print("Difference of differences", (mlp_erased_loss - lenet_erased_loss) - (mlp_unerased_loss - lenet_unerased_loss)) # how much loss you lose switching to lenet on unerased - how much loss you loss switching to lenet on erased
-                    # return erased_conv_gain  - unerased_conv_gain
-                    return (mlp_erased_loss - lenet_erased_loss) - (mlp_unerased_loss - lenet_unerased_loss)
+                
 
-                print("Erased gain diff: ", ratio_diff(unerased_mean_lenet_mdl, erased_mean_lenet_mdl, unerased_mean_mlp_mdl, erased_mean_mlp_mdl))
+
+                # Difference of differences shrinks from first to second order (except for width = 128, depth = 2)
+
+                # This means that the gain from adding a convolution is greater over a LEACEd dataset than a QLEACEd one.
+                print("Amount adding a convolution reduces loss on leaced data - same thing on unerased: ", diff_of_diffs(unerased_mean_lenet_mdl, leaced_mean_lenet_mdl, unerased_mean_mlp_mdl, leaced_mean_mlp_mdl))
+                print("Amount adding a convolution reduces loss on qleaced data - same thing on unerased: ", diff_of_diffs(unerased_mean_lenet_mdl, erased_mean_lenet_mdl, unerased_mean_mlp_mdl, erased_mean_mlp_mdl))
+                print("Amount linear data erasure increases loss with MLPs - the same thing with convolutions", diff_of_diffs_2(unerased_mean_lenet_mdl, leaced_mean_lenet_mdl, unerased_mean_mlp_mdl, leaced_mean_mlp_mdl))
+                print("Amount quadratic data erasure increases loss with MLPs - the same thing with convolutions", diff_of_diffs_2(unerased_mean_lenet_mdl, erased_mean_lenet_mdl, unerased_mean_mlp_mdl, erased_mean_mlp_mdl))
+                    
+
+
 
             # fig.update_xaxes(
             #     type="log",

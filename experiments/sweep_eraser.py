@@ -57,8 +57,8 @@ def parse_args():
     parser.add_argument("--normalize", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--nocache", action="store_true")
-    parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10", "fake-cifar10", "fake-cifarnet"), default="cifar10")
-    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "alf_qleace"])
+    parser.add_argument("--dataset", type=str, choices=("mnist", "cifarnet", "cifar10", "fake-cifar10", "fake-cifarnet", "svhn", "fake-svhn"), default="cifar10")
+    parser.add_argument("--erasers", nargs="+", default=["control", "qleace", "leace", "alf_qleace"]) # "random"
     parser.add_argument("--act", type=str, choices=("relu", "gelu", "swiglu"), default="relu")
     return parser.parse_args()
 
@@ -68,9 +68,11 @@ sweep_params = {
     'lenet': {
         'lr': {
             'control': 5e-4, # Guessing
+            'leace': 5e-4, # Guessing
         },
         'b1': {
             'control': 0.95, # Guessing
+            'leace': 0.95, # Guessing
         },
         'mup_width': 128,
         'mup_depth': 2,
@@ -79,17 +81,35 @@ sweep_params = {
         'depths': [1, 2, 3, 4, 6, 8]
     },
     'mlp': {
+        'svhn': {
+            'lr': {
+                'control': 1e-4,
+                'leace': 1e-4,
+                'qleace': 1e-4,
+                'alf_qleace': 1e-4, # guessing
+                'random': 1e-4,
+            },
+            'b1': {
+                'control': 0.95, # was 0.99 for cifar10
+                'leace': 0.95,
+                'qleace': 0.95,
+                'alf_qleace': 0.95, # guessing
+                'random': 0.95,
+            },
+        },
         'lr': {
             'control': 5e-4,
             'leace': 5e-4,
             'qleace': 5e-4,
             'alf_qleace': 5e-4, # guessing
+            'random': 5e-4,
         },
         'b1': {
             'control': 0.95, # was 0.99 for cifar10
             'leace': 0.95,
             'qleace': 0.95,
             'alf_qleace': 0.95, # guessing
+            'random': 0.95,
         },
         'mup_width': 128,
         'mup_depth': 2,
@@ -170,8 +190,13 @@ def main():
     mup_depth = sweep_params[args.net]['mup_depth']
 
     for eraser in args.erasers:
-        lr = sweep_params[args.net]['lr'][eraser]
-        b1 = sweep_params[args.net]['b1'][eraser]
+        if args.dataset in sweep_params[args.net]:
+            lr = sweep_params[args.net][args.dataset]['lr'][eraser]
+            b1 = sweep_params[args.net][args.dataset]['b1'][eraser]
+            print("Using dataset specific lr and b1")
+        else:
+            lr = sweep_params[args.net]['lr'][eraser]
+            b1 = sweep_params[args.net]['b1'][eraser]
 
         if args.width:
             for width in widths[args.start:]:
