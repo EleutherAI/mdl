@@ -28,11 +28,14 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
     records = []
 
     for file in data_path.glob("*.pth"):
+        stem = file.stem
+        if 'alf_qleace' in file.stem:
+            stem = stem.replace('alf_qleace', 'alf-qleace')
         # Parse filename
         try:
-            net, act, width, depth, eraser, directory, dataset = file.stem.split("_")
+            net, act, width, depth, eraser, directory, dataset = stem.split("_")
         except ValueError:
-            print(file.stem)
+            print(stem)
             continue
 
         width = int(width.split("=")[1])

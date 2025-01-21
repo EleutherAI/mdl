@@ -69,10 +69,14 @@ sweep_params = {
         'lr': {
             'control': 5e-4, # Guessing
             'leace': 5e-4, # Guessing
+            'qleace': 5e-4, # Guessing
+            'alf_qleace': 5e-4, # Guessing
         },
         'b1': {
             'control': 0.95, # Guessing
             'leace': 0.95, # Guessing
+            'qleace': 0.95, # Guessing
+            'alf_qleace': 0.95, # Guessing
         },
         'mup_width': 128,
         'mup_depth': 2,
@@ -156,8 +160,26 @@ sweep_params = {
     'resmlp': {
         'mup_width': 128,
         'mup_depth': 2,
-        'widths': [128, 256, 512, 1024],
-        'depths': [2, 4, 8],
+        'widths': [64, 128, 256, 512, 1024, 2048],
+        'depths': [1, 2, 3, 4, 6, 8],
+        'lr': {
+            'control': 5e-4,
+            'leace': 5e-4,
+            'qleace': 5e-4,
+            'alf_qleace': 5e-4, # guessing
+        },
+        'b1': {
+            'control': 0.99,
+            'leace': 0.95,
+            'qleace': 0.95,
+            'alf_qleace': 0.95, # guessing
+        },
+    },
+    'skipmlp': {
+        'mup_width': 128,
+        'mup_depth': 2,
+        'widths': [64, 128, 256, 512, 1024, 2048],
+        'depths': [1, 2, 3, 4, 6, 8],
         'lr': {
             'control': 5e-4,
             'leace': 5e-4,
@@ -176,7 +198,9 @@ sweep_params = {
 
 def artifact_exists(width, depth, net, eraser, out, act, args):
     names = [
-        f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}_d={args.dataset}.pth",
+        # f"{net}_{act}_h={width}_d={depth}_{eraser}{'_n=' + args.normalize if args.normalize else ''}_{out}_d={args.dataset}.pth",
+        f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}_d={args.dataset}.pth",
+        f"{net}_{act}_h={width}_d={depth}_{eraser}_{out}_{args.dataset}.pth",
     ]
     return any((Path(f"/mnt/ssd-1/lucia/{out}") / name).exists() for name in names)
 

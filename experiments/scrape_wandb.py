@@ -19,6 +19,7 @@ DISPLAY_NAMES = {
     "qleace": "QLEACE",
     "qleace2": "ALF-QLEACE",
     "alf_qleace": "ALF-QLEACE",
+    "alf-qleace": "ALF-QLEACE",
     # activation functions
     "relu": "ReLU",
     "gelu": "GELU",

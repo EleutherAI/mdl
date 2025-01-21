@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from experiments.sweep_eraser import sweep_params
@@ -20,367 +21,321 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
     widths_depth = [(reference_width, depth) for depth in sweep_params["mlp"]["depths"]]
 
     def diff_of_diffs(
-        lenet_unerased_loss, lenet_erased_loss, mlp_unerased_loss, mlp_erased_loss
-    ):
-        """The amount adding a convolution improves the loss on erased dataset - the same thing for vanilla dataset"""
-        return (mlp_erased_loss - lenet_erased_loss) - (
-            mlp_unerased_loss - lenet_unerased_loss
+        lenet_unerased_metric, 
+        lenet_erased_metric, 
+        mlp_unerased_metric, 
+        mlp_erased_metric,
+        lenet_unerased_std,
+        lenet_erased_std,
+        mlp_unerased_std,
+        mlp_erased_std,
+        lenet_unerased_n,
+        lenet_erased_n,
+        mlp_unerased_n,
+        mlp_erased_n,
+    ) -> tuple[float, float]:
+        """The difference in the extent to which adding a convolution changes the metric on an erased and an unerased dataset"""
+        did = (mlp_erased_metric - lenet_erased_metric) - (
+            mlp_unerased_metric - lenet_unerased_metric
         )
+
+        se_erased = np.sqrt(
+            lenet_erased_std ** 2 / lenet_erased_n
+            + mlp_erased_std ** 2 / mlp_erased_n
+        )
+        se_unerased = np.sqrt(
+            lenet_unerased_std ** 2 / lenet_unerased_n
+            + mlp_unerased_std ** 2 / mlp_unerased_n
+        )
+
+        se = np.sqrt(
+            se_erased ** 2 + se_unerased ** 2
+        )
+
+        return did, se
 
     # Lists to store results
     width_results = []
-    width_individual_results = []
     depth_results = []
-    depth_individual_results = []
 
-    for dataset in ["cifar10"]:  # cifarnet
+    for dataset in ["cifar10"]: # "cifarnet"
         # Width sweep
         for width, depth in width_depths:
-            unerased_mlp_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            leace_mlp_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "LEACE")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            fake_data_mlp_df = df[
-                (df["dataset"] == f"fake-{dataset}")
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
+            data = {"lenet": {}, "mlp": {}}
+            for net in ["lenet", "mlp"]:
+                for eraser in ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]:
+                    data[net][eraser] = {}
 
-            unerased_lenet_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            leace_lenet_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "LEACE")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            fake_data_lenet_df = df[
-                (df["dataset"] == f"fake-{dataset}")
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
+                    data[net][eraser]["df"] = df[
+                        (df["dataset"] == dataset)
+                        & (df["net_id"] == net)
+                        & (df["eraser"] == eraser)
+                        & (df["act"] == "ReLU")
+                        & (df["width"] == width)
+                        & (df["depth"] == depth)
+                    ]
+                    data[net][eraser]["mean"] = data[net][eraser]["df"]["mdl"].mean()
+                    data[net][eraser]["std"] = data[net][eraser]["df"]["mdl"].std()
+                    data[net][eraser]["n"] = 10 # len(data[net][eraser]["df"]["mdl"])
 
-            if any(
-                df.empty
-                for df in [
-                    unerased_lenet_df,
-                    leace_lenet_df,
-                    fake_data_lenet_df,
-                    unerased_mlp_df,
-                    leace_mlp_df,
-                    fake_data_mlp_df,
+                # Add fake dataset eraser under Iterative Erasure
+                data[net]["Iterative Erasure"] = {}
+                data[net]["Iterative Erasure"]["df"] = df[
+                    (df["dataset"] == f"fake-{dataset}")
+                    & (df["net_id"] == net)
+                    & (df["eraser"] == "Control")
+                    & (df["act"] == "ReLU")
+                    & (df["width"] == width)
+                    & (df["depth"] == depth)
                 ]
-            ):
-                continue
+                data[net]["Iterative Erasure"]["mean"] = data[net]["Iterative Erasure"][
+                    "df"
+                ]["mdl"].mean()
+                data[net]["Iterative Erasure"]["std"] = data[net]["Iterative Erasure"][
+                    "df"
+                ]["mdl"].std()
+                data[net]["Iterative Erasure"]["n"] = 10 # len(
+                    # data[net]["Iterative Erasure"]["df"]["mdl"]
+                # )
 
-            # Calculate means
-            unerased_mean_mlp_mdl = unerased_mlp_df["mdl"].mean()
-            leaced_mean_mlp_mdl = leace_mlp_df["mdl"].mean()
-            erased_mean_mlp_mdl = fake_data_mlp_df["mdl"].mean()
 
-            unerased_mean_lenet_mdl = unerased_lenet_df["mdl"].mean()
-            leaced_mean_lenet_mdl = leace_lenet_df["mdl"].mean()
-            erased_mean_lenet_mdl = fake_data_lenet_df["mdl"].mean()
+            for eraser in ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]:
+                if data['mlp'][eraser]["n"] == 0 or data['lenet'][eraser]["n"] == 0:
+                    print(f"Skipping {eraser} {width} {depth} because n=0")
+                    print('mlp', data['mlp'][eraser]["n"], 'lenet', data['lenet'][eraser]["n"])
+                    continue
 
-            # Calculate differences
-            leace_dod = diff_of_diffs(
-                unerased_mean_lenet_mdl,
-                leaced_mean_lenet_mdl,
-                unerased_mean_mlp_mdl,
-                leaced_mean_mlp_mdl,
-            )
-            qleace_dod = diff_of_diffs(
-                unerased_mean_lenet_mdl,
-                erased_mean_lenet_mdl,
-                unerased_mean_mlp_mdl,
-                erased_mean_mlp_mdl,
-            )
-
-            width_results.append(
-                {"width": width, "leace_dod": leace_dod, "qleace_dod": qleace_dod}
-            )
-
-            # Calculate individual seed differences
-            for seed in unerased_mlp_df["seed"].unique():
-                seed_unerased_mlp = unerased_mlp_df[unerased_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_leaced_mlp = leace_mlp_df[leace_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_erased_mlp = fake_data_mlp_df[fake_data_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-
-                seed_unerased_lenet = unerased_lenet_df[
-                    unerased_lenet_df["seed"] == seed
-                ]["mdl"].iloc[0]
-                seed_leaced_lenet = leace_lenet_df[leace_lenet_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_erased_lenet = fake_data_lenet_df[
-                    fake_data_lenet_df["seed"] == seed
-                ]["mdl"].iloc[0]
-
-                seed_leace_dod = diff_of_diffs(
-                    seed_unerased_lenet,
-                    seed_leaced_lenet,
-                    seed_unerased_mlp,
-                    seed_leaced_mlp,
-                )
-                seed_qleace_dod = diff_of_diffs(
-                    seed_unerased_lenet,
-                    seed_erased_lenet,
-                    seed_unerased_mlp,
-                    seed_erased_mlp,
+                data['mlp'][eraser]["did"], data['mlp'][eraser]["se"] = diff_of_diffs(
+                    data['lenet']["Control"]["mean"],
+                    data['lenet'][eraser]["mean"],
+                    data['mlp']["Control"]["mean"],
+                    data['mlp'][eraser]["mean"],
+                    data['lenet']["Control"]["std"],
+                    data['lenet'][eraser]["std"],
+                    data['mlp']["Control"]["std"],
+                    data['mlp'][eraser]["std"],
+                    data['lenet']["Control"]["n"],
+                    data['lenet'][eraser]["n"],
+                    data['mlp']["Control"]["n"],
+                    data['mlp'][eraser]["n"],
                 )
 
-                width_individual_results.append(
-                    {
-                        "width": width,
-                        "leace_dod": seed_leace_dod,
-                        "qleace_dod": seed_qleace_dod,
-                        "type": "seed",
-                    }
-                )
+            data['mlp']["Iterative Erasure"]["did"], data['mlp']["Iterative Erasure"]["se"] = diff_of_diffs(
+                data['lenet']["Control"]["mean"],
+                data['lenet']["Iterative Erasure"]["mean"],
+                data['mlp']["Control"]["mean"],
+                data['mlp']["Iterative Erasure"]["mean"],
+                data['lenet']["Control"]["std"],
+                data['lenet']["Iterative Erasure"]["std"],
+                data['mlp']["Control"]["std"],
+                data['mlp']["Iterative Erasure"]["std"],
+                data['lenet']["Control"]["n"],
+                data['lenet']["Iterative Erasure"]["n"],
+                data['mlp']["Control"]["n"],
+                data['mlp']["Iterative Erasure"]["n"],
+            )
+
+            width_results.append({
+                "width": width,
+                "leace_did": data["mlp"]["LEACE"]["did"],
+                "qleace_did": data["mlp"]["QLEACE"]["did"],
+                "iterative_erasure_did": data["mlp"]["Iterative Erasure"]["did"],
+                "alf_qleace_did": data["mlp"]["ALF-QLEACE"]["did"],
+                "leace_se": data["mlp"]["LEACE"]["se"],
+                "qleace_se": data["mlp"]["QLEACE"]["se"],
+                "iterative_erasure_se": data["mlp"]["Iterative Erasure"]["se"],
+                "alf_qleace_se": data["mlp"]["ALF-QLEACE"]["se"],
+            })
 
         # Depth sweep
         for width, depth in widths_depth:
-            unerased_mlp_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            leace_mlp_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "LEACE")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            fake_data_mlp_df = df[
-                (df["dataset"] == f"fake-{dataset}")
-                & (df["net_id"] == "mlp")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
+            data = {"lenet": {}, "mlp": {}}
 
-            unerased_lenet_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            leace_lenet_df = df[
-                (df["dataset"] == dataset)
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "LEACE")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
-            fake_data_lenet_df = df[
-                (df["dataset"] == f"fake-{dataset}")
-                & (df["net_id"] == "lenet")
-                & (df["eraser"] == "Control")
-                & (df["act"] == "ReLU")
-                & (df["width"] == width)
-                & (df["depth"] == depth)
-            ]
+            for net in ["lenet", "mlp"]:
+                for eraser in ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]:
+                    data[net][eraser] = {}
+                    data[net][eraser]["df"] = df[
+                        (df["dataset"] == dataset)
+                        & (df["net_id"] == net)
+                        & (df["eraser"] == eraser)
+                        & (df["act"] == "ReLU")
+                        & (df["width"] == width)
+                        & (df["depth"] == depth)
+                    ]
+                    data[net][eraser]["mean"] = data[net][eraser]["df"]["mdl"].mean()
+                    data[net][eraser]["std"] = data[net][eraser]["df"]["mdl"].std()
+                    data[net][eraser]["n"] = 10 # len(data[net][eraser]["df"]["mdl"])
 
-            if any(
-                df.empty
-                for df in [
-                    unerased_lenet_df,
-                    leace_lenet_df,
-                    fake_data_lenet_df,
-                    unerased_mlp_df,
-                    leace_mlp_df,
-                    fake_data_mlp_df,
+                # Add fake dataset eraser under Iterative Erasure
+                data[net]["Iterative Erasure"] = {}
+                data[net]["Iterative Erasure"]["df"] = df[
+                    (df["dataset"] == f"fake-{dataset}")
+                    & (df["net_id"] == net)
+                    & (df["eraser"] == "Control")
+                    & (df["act"] == "ReLU")
+                    & (df["width"] == width)
+                    & (df["depth"] == depth)
                 ]
-            ):
-                continue
+                data[net]["Iterative Erasure"]["mean"] = data[net]["Iterative Erasure"][
+                    "df"
+                ]["mdl"].mean()
+                data[net]["Iterative Erasure"]["std"] = data[net]["Iterative Erasure"][
+                    "df"
+                ]["mdl"].std()
+                data[net]["Iterative Erasure"]["n"] = 10 # len(
+                    # data[net]["Iterative Erasure"]["df"]["mdl"]
+                # )
 
-            # Calculate means
-            unerased_mean_mlp_mdl = unerased_mlp_df["mdl"].mean()
-            leaced_mean_mlp_mdl = leace_mlp_df["mdl"].mean()
-            erased_mean_mlp_mdl = fake_data_mlp_df["mdl"].mean()
+            for eraser in ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]:
+                if data['mlp'][eraser]["n"] == 0:
+                    print(f"Skipping mlp {eraser} {width} {depth} because n=0")
+                    continue
+                if data['lenet'][eraser]["n"] == 0:
+                    print(f"Skipping lenet {eraser} {width} {depth} because n=0")
+                    continue
+                
+                data['mlp'][eraser]["did"], data['mlp'][eraser]["se"] = diff_of_diffs(
+                    data['lenet']["Control"]["mean"],
+                    data['lenet'][eraser]["mean"],
+                    data['mlp']["Control"]["mean"],
+                    data['mlp'][eraser]["mean"],
+                    data['lenet']["Control"]["std"],
+                    data['lenet'][eraser]["std"],
+                    data['mlp']["Control"]["std"],
+                    data['mlp'][eraser]["std"],
+                    data['lenet']["Control"]["n"],
+                    data['lenet'][eraser]["n"],
+                    data['mlp']["Control"]["n"],
+                    data['mlp'][eraser]["n"],
+                )
 
-            unerased_mean_lenet_mdl = unerased_lenet_df["mdl"].mean()
-            leaced_mean_lenet_mdl = leace_lenet_df["mdl"].mean()
-            erased_mean_lenet_mdl = fake_data_lenet_df["mdl"].mean()
-
-            # Calculate differences
-            leace_dod = diff_of_diffs(
-                unerased_mean_lenet_mdl,
-                leaced_mean_lenet_mdl,
-                unerased_mean_mlp_mdl,
-                leaced_mean_mlp_mdl,
+            data['mlp']["Iterative Erasure"]["did"], data['mlp']["Iterative Erasure"]["se"] = diff_of_diffs(
+                data['lenet']["Control"]["mean"],
+                data['lenet']["Iterative Erasure"]["mean"],
+                data['mlp']["Control"]["mean"],
+                data['mlp']["Iterative Erasure"]["mean"],
+                data['lenet']["Control"]["std"],
+                data['lenet']["Iterative Erasure"]["std"],
+                data['mlp']["Control"]["std"],
+                data['mlp']["Iterative Erasure"]["std"],
+                data['lenet']["Control"]["n"],
+                data['lenet']["Iterative Erasure"]["n"],
+                data['mlp']["Control"]["n"],
+                data['mlp']["Iterative Erasure"]["n"],
             )
-            qleace_dod = diff_of_diffs(
-                unerased_mean_lenet_mdl,
-                erased_mean_lenet_mdl,
-                unerased_mean_mlp_mdl,
-                erased_mean_mlp_mdl,
-            )
-
+            
             depth_results.append(
-                {"depth": depth, "leace_dod": leace_dod, "qleace_dod": qleace_dod}
+                {
+                    "depth": depth,
+                    "leace_did": data["mlp"]["LEACE"]["did"] if 'did' in data["mlp"]["LEACE"] else None,
+                    "qleace_did": data["mlp"]["QLEACE"]["did"] if 'did' in data["mlp"]["QLEACE"] else None,
+                    "iterative_erasure_did": data["mlp"]["Iterative Erasure"][
+                        "did"
+                    ] if 'did' in data["mlp"]["Iterative Erasure"] else None,
+                    "alf_qleace_did": data["mlp"]["ALF-QLEACE"]["did"],
+                    "leace_se": data["mlp"]["LEACE"]["se"] if 'se' in data["mlp"]["LEACE"] else None,
+                    "qleace_se": data["mlp"]["QLEACE"]["se"] if 'se' in data["mlp"]["QLEACE"] else None,
+                    "iterative_erasure_se": data["mlp"][
+                        "Iterative Erasure"
+                    ]["se"] if 'se' in data["mlp"]["Iterative Erasure"] else None,
+                    "alf_qleace_se": data["mlp"]["ALF-QLEACE"][
+                        "se"
+                    ],
+                }
             )
 
-            # Calculate individual seed differences
-            for seed in unerased_mlp_df["seed"].unique():
-                seed_unerased_mlp = unerased_mlp_df[unerased_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_leaced_mlp = leace_mlp_df[leace_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_erased_mlp = fake_data_mlp_df[fake_data_mlp_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-
-                seed_unerased_lenet = unerased_lenet_df[
-                    unerased_lenet_df["seed"] == seed
-                ]["mdl"].iloc[0]
-                seed_leaced_lenet = leace_lenet_df[leace_lenet_df["seed"] == seed][
-                    "mdl"
-                ].iloc[0]
-                seed_erased_lenet = fake_data_lenet_df[
-                    fake_data_lenet_df["seed"] == seed
-                ]["mdl"].iloc[0]
-
-                seed_leace_dod = diff_of_diffs(
-                    seed_unerased_lenet,
-                    seed_leaced_lenet,
-                    seed_unerased_mlp,
-                    seed_leaced_mlp,
-                )
-                seed_qleace_dod = diff_of_diffs(
-                    seed_unerased_lenet,
-                    seed_erased_lenet,
-                    seed_unerased_mlp,
-                    seed_erased_mlp,
-                )
-
-                depth_individual_results.append(
-                    {
-                        "depth": depth,
-                        "leace_dod": seed_leace_dod,
-                        "qleace_dod": seed_qleace_dod,
-                        "type": "seed",
-                    }
-                )
-
-        # Create plots
         width_df = pd.DataFrame(width_results)
-        width_individual_df = pd.DataFrame(width_individual_results)
         depth_df = pd.DataFrame(depth_results)
-        depth_individual_df = pd.DataFrame(depth_individual_results)
 
-        fig = make_subplots(rows=1, cols=2)  # Removed subplot titles
+        fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.04)
 
         # Width subplot (left)
-        fig.add_trace(
-            px.line(width_df, x="width", y="leace_dod")
-            .data[0]
-            .update(line_color="red"),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            px.line(width_df, x="width", y="qleace_dod")
-            .data[0]
-            .update(line_color="blue"),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            px.scatter(width_individual_df, x="width", y="leace_dod")
-            .data[0]
-            .update(marker=dict(size=5, opacity=0.5, color="red"), showlegend=False),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            px.scatter(width_individual_df, x="width", y="qleace_dod")
-            .data[0]
-            .update(marker=dict(size=5, opacity=0.5, color="blue"), showlegend=False),
-            row=1,
-            col=1,
-        )
+        for method_idx, (method, name) in enumerate([
+            ("qleace", "QLEACE"), ("iterative_erasure", "Iterative Erasure"), 
+            ("alf_qleace", "ALF-QLEACE"),("leace", "LEACE")
+        ]):
+            width_df = width_df.sort_values('width')
 
-        # Depth subplot (right)
-        fig.add_trace(
-            px.line(depth_df, x="depth", y="leace_dod")
-            .data[0]
-            .update(line_color="red", name="1st order"),
-            row=1,
-            col=2,
-        )
-        fig.add_trace(
-            px.line(depth_df, x="depth", y="qleace_dod")
-            .data[0]
-            .update(line_color="blue", name="2nd order"),
-            row=1,
-            col=2,
-        )
-        fig.add_trace(
-            px.scatter(depth_individual_df, x="depth", y="leace_dod")
-            .data[0]
-            .update(marker=dict(size=5, opacity=0.5, color="red"), showlegend=False),
-            row=1,
-            col=2,
-        )
-        fig.add_trace(
-            px.scatter(depth_individual_df, x="depth", y="qleace_dod")
-            .data[0]
-            .update(marker=dict(size=5, opacity=0.5, color="blue"), showlegend=False),
-            row=1,
-            col=2,
-        )
+            fig.add_trace(
+                go.Scatter(
+                    x=width_df["width"],
+                    y=width_df[f"{method}_did"],
+                    line_color=px.colors.qualitative.Plotly[method_idx],
+                    name=name
+                ),
+                row=1,
+                col=1,
+            )
 
+            x = width_df["width"].tolist() + width_df["width"].tolist()[::-1]
+            y = (width_df[f"{method}_did"] + width_df[f"{method}_se"]).tolist() + (width_df[f"{method}_did"] - width_df[f"{method}_se"]).tolist()[::-1]
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    fill='toself',
+                    fillcolor=px.colors.qualitative.Plotly[method_idx],
+                    opacity=0.1,
+                    line=dict(color='rgba(255,255,255,0)'),
+                    showlegend=False,
+                    name=f"{name} error band",
+                ),
+                row=1,
+                col=1,
+            )
+
+        # Depth subplot (right)  
+        for method_idx, (method, name) in enumerate([
+            ("qleace", "QLEACE"), ("iterative_erasure", "Iterative Erasure"), 
+            ("alf_qleace", "ALF-QLEACE"),("leace", "LEACE")
+        ]):
+            depth_df = depth_df.sort_values('depth')
+
+            fig.add_trace(
+                go.Scatter(
+                    x=depth_df["depth"],
+                    y=depth_df[f"{method}_did"],
+                    line_color=px.colors.qualitative.Plotly[method_idx],
+                    name=name,
+                    showlegend=False,
+                ),
+                row=1,
+                col=2,
+            )
+
+            x = depth_df["depth"].tolist() + depth_df["depth"].tolist()[::-1]
+            y = (depth_df[f"{method}_did"] + depth_df[f"{method}_se"]).tolist() + (depth_df[f"{method}_did"] - depth_df[f"{method}_se"]).tolist()[::-1]            
+            
+            # Error bands
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=y,
+                    fill='toself',
+                    fillcolor=px.colors.qualitative.Plotly[method_idx],
+                    opacity=0.1,
+                    line=dict(color='rgba(255,255,255,0)'),
+                    showlegend=False,
+                    name=f"{name} error band"
+                ),
+                row=1,
+                col=2
+            )
+
+     
         # Update layout
         fig.update_layout(
             height=350,
             width=1000,
-            showlegend=True,
-            legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
-            margin=dict(l=50, r=30, t=30, b=50),
+            legend=dict(
+                yanchor="middle",
+                y=0.66,
+                xanchor="left",
+                x=0.55,  # Position legend just outside the right edge of plots
+                bgcolor='rgba(255,255,255,0.7)'
+            ),
+            margin=dict(l=20, r=20, t=30, b=50),
         )
 
         fig.update_xaxes(
@@ -424,23 +379,27 @@ def analyze_conv_gain(df: pd.DataFrame, out: Path, tag: str):
             col=2,
         )
 
-        # Update y-axes
         fig.update_yaxes(
-            title_text="Difference of differences",
+            title_text="Difference in differences",
             range=[
                 0,
-                max(width_df["leace_dod"].max(), width_df["qleace_dod"].max()) * 1.1,
+                max(width_df["leace_did"].max(), width_df["qleace_did"].max()) * 1.1,
             ],
             row=1,
             col=1,
         )
 
-        # Right plot lines
-        for i in range(4, 6):
-            fig.data[i].showlegend = True
- 
-        # Write the combined figure
-        fig.write_image(out / f"combined_dod{'_' + tag if tag else ''}.pdf")
+        fig.update_yaxes(
+            range=[
+                0,
+                max(width_df["leace_did"].max(), width_df["qleace_did"].max()) * 1.1,
+            ],
+            showticklabels=False,
+            row=1,
+            col=2,
+        )
+
+        fig.write_image(out / f"combined_did{'_' + tag if tag else ''}_{dataset}.pdf")
 
 
 if __name__ == "__main__":
