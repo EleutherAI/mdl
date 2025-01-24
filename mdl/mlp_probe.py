@@ -177,7 +177,7 @@ class ResMlpProbe(Probe):
         )
 
         self.fc = MuReadout(
-            hidden_size, output_dim, device=device, dtype=dtype, readout_zero_init=True
+            sizes[-1], output_dim, device=device, dtype=dtype, readout_zero_init=True
         )
 
         # Configure MuP

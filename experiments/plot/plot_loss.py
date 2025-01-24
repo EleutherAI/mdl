@@ -23,7 +23,7 @@ def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
     df = df[df["dataset"] == dataset]
 
     # Colors for different erasers
-    colors = px.colors.qualitative.Set1
+    colors = px.colors.qualitative.Plotly
     ordered_erasers = ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]
 
     for net_id in df["net_id"].unique():
