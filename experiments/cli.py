@@ -37,7 +37,7 @@ class Args:
     out: str = "results"
 
     # Dataset options
-    dataset: Literal["cifar10", "cifarnet", "fake-cifar10", "fake-cifarnet", "svhn", "fake-svhn"] = "cifar10"
+    dataset: Literal["cifar10", "cifarnet", "fake-cifar10", "fake-cifarnet", "svhn", "fake-svhn", "fake-leace-cifar10"] = "cifar10"
     eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace", "random"] = "control"
     method: Literal["leace", "orth", "none"] = "leace"
     shrinkage: bool = False
@@ -156,6 +156,32 @@ def get_cifar10(device: str | torch.device, shuffle=True):
     Y_train, Y_val = Y[:-val_size], Y[-val_size:]
 
     return X_train, Y_train, X_val, Y_val, k, X, Y
+
+
+def get_fake_leace_cifar10(shuffle=True):
+    train = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifar10/train")
+    val = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifar10/val")
+    train.set_format(type="torch", columns=["image", "label"])
+    val.set_format(type="torch", columns=["image", "label"])
+
+    X_train = train["image"]
+    Y_train = train["label"]
+    X_val = val["image"]
+    Y_val = val["label"]
+
+    X = X_train
+    Y = Y_train
+    k = int(Y_train.max()) + 1
+
+    if shuffle:
+        rng = torch.Generator(device=X_train.device).manual_seed(42)
+        perm = torch.randperm(len(X_train), generator=rng, device=X_train.device)
+        X_train, Y_train = X_train[perm], Y_train[perm]
+        perm = torch.randperm(len(X_val), generator=rng, device=X_val.device)
+        X_val, Y_val = X_val[perm], Y_val[perm]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
 
 
 def get_fake_cifarnet(shuffle=True):
@@ -371,6 +397,7 @@ if __name__ == "__main__":
         # "fake-cifarnet": get_fake_cifarnet(),
         "svhn": get_svhn(device),
         # "fake-svhn": get_fake_svhn(),
+        "fake-leace-cifar10": get_fake_leace_cifar10(),
     }[args.dataset]
 
     if args.normalize:
