@@ -20,7 +20,7 @@ from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
-from concept_erasure.re import RandomEraser
+# from concept_erasure.re import RandomEraser
 
 from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
@@ -28,6 +28,7 @@ from mdl.sweep import Sweep
 from mdl.vision_probe import ConvNextProbe, VisionProbe, SwinProbe
 from mdl.resnet_probe import ResNetProbe
 
+torch.set_float32_matmul_precision('high')
 
 @dataclass
 class Args:
@@ -50,11 +51,15 @@ class Args:
     )
     act: Literal["relu", "gelu", "swiglu"] = "relu"
 
-    # Model dimensions
+    # Model dimensions for simple models
     width: int = 128
     depth: int = 2
     mup_width: int | None = None  # Width of the base model used to tune the initial LR
     mup_depth: int | None = None  # Depth of the base model used to tune the initial LR
+    
+    # Model dimensions for SOTA vision architectures
+    arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
+    mup_arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
 
     # Training parameters
     lr: float = 1e-3
@@ -62,7 +67,6 @@ class Args:
     num_seeds: int = 5
     max_epochs: int = 30_000
     early_stop_epochs: int = 100
-    schedulefree: bool = False
 
     # Runtime flags
     debug: bool = False
@@ -71,7 +75,6 @@ class Args:
     save: bool = False
     overwrite: bool = False
     trial: bool = False  # Run a single trial with all data
-    wandb_run_id: str | None = None
 
 
 T = TypeVar("T")
@@ -309,8 +312,8 @@ def load_eraser(
     if cache_key not in state or nocache:
         if eraser_str == "control":
             state[cache_key] = IdentityEraser()
-        elif eraser_str == "random":
-            state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
+        # elif eraser_str == "random":
+            # state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
         else:
             if eraser_str == "leace":
                 fitter = LeaceFitter(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
@@ -351,9 +354,9 @@ if __name__ == "__main__":
     mup_path.mkdir(exist_ok=True)
 
     data_path = Path(
-        f"/mnt/ssd-1/lucia/{args.out}"
+        f"{args.out}"
         if not args.debug
-        else f"/mnt/ssd-1/lucia/debug-{args.out}"
+        else f"debug-{args.out}"
     )
     data_path.mkdir(exist_ok=True, parents=True)
 
@@ -364,10 +367,10 @@ if __name__ == "__main__":
     (X_train, Y_train, X_val, Y_val, k, X, Y) = {
         "cifar10": get_cifar10(device),
         "cifarnet": get_cifarnet(),
-        "fake-cifar10": get_fake_cifar10(),
-        "fake-cifarnet": get_fake_cifarnet(),
+        # "fake-cifar10": get_fake_cifar10(),
+        # "fake-cifarnet": get_fake_cifarnet(),
         "svhn": get_svhn(device),
-        "fake-svhn": get_fake_svhn(),
+        # "fake-svhn": get_fake_svhn(),
     }[args.dataset]
 
     if args.normalize:
@@ -376,6 +379,7 @@ if __name__ == "__main__":
 
     num_features = X.shape[1] * X.shape[2] * X.shape[3]
     
+    # Get eraser
     eraser = load_eraser(
         args.eraser,
         args.dataset,
@@ -393,6 +397,7 @@ if __name__ == "__main__":
         device if args.dataset != "cifarnet" else "cpu",
     ).to(device)
 
+    # Get model
     image_size = X.shape[-1]
 
     model_cls = {
@@ -420,6 +425,7 @@ if __name__ == "__main__":
         num_features=num_features,
         num_layers=args.depth,  # mup depth unsupported
         hidden_size=args.mup_width if args.mup_width else args.width,
+        arch=args.mup_arch if args.mup_arch else args.arch,
         **probe_kwargs
     )
     delta_model = model_cls(
@@ -427,6 +433,7 @@ if __name__ == "__main__":
         num_features=num_features,
         num_layers=args.depth,
         hidden_size=args.width,
+        arch=args.arch,
         **probe_kwargs
     )
 
@@ -453,7 +460,7 @@ if __name__ == "__main__":
         "vision": False,
         "swin": False,
         "lenet": False,
-    }
+    }[args.net]
 
     padding = round(image_size * 0.125)
 
@@ -464,7 +471,7 @@ if __name__ == "__main__":
             transforms.RandomHorizontalFlip(),
             transforms.Lambda(lambda x: x.flatten(1)),
         ]
-        if flatten[args.net]
+        if flatten
         else [
             transforms.RandomCrop(image_size, padding),
             transforms.RandomHorizontalFlip(),
@@ -492,17 +499,18 @@ if __name__ == "__main__":
         if args.post_erase_normalize:
             x_erased = x_erased / std
 
-        return x_erased if flatten[args.net] else x_erased.reshape_as(x)
+        return x_erased if flatten else x_erased.reshape_as(x)
 
     if args.post_erase_normalize:
         X_val = X_val.flatten(1) / X_train.flatten(1).std(dim=0).to(X_val.device)
 
     # Collect MDL data
+    # TODO this can probably be cleaned up
     probe_kwargs = dict(
         num_layers=args.depth,
         hidden_size=args.width,
         learning_rate=args.lr,
-        schedule_free=args.schedulefree,
+        schedule_free=True,
         betas=(args.b1, 0.999),
         base_shapes_path=base_shapes_path,
     )
@@ -511,6 +519,8 @@ if __name__ == "__main__":
         probe_kwargs['fc_hidden_sizes'] = lenet_params['fc_hidden_sizes']
     if model_cls == MlpProbe:
         probe_kwargs["activation"] = args.act
+    if model_cls == SwinProbe or model_cls == ConvNextProbe:
+        probe_kwargs["arch"] = args.arch
     if args.trial:
         # These are otherwise passed into the sweep
         probe_kwargs["num_classes"] = k
@@ -519,12 +529,15 @@ if __name__ == "__main__":
         probe_kwargs["device"] = device
 
     results = []
+
+    size_str = f'a={args.arch}' if args.net == "convnext" or args.net == "swin" else f'h={args.width}_d={args.depth}'
+
     for seed in range(args.num_seeds):
-        wandb_name = f'{args.eraser} {args.name} w={args.width} d={args.depth} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} d={args.dataset}'
+        wandb_name = f'{args.eraser} {args.name} {size_str.replace("_", " ")} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} d={args.dataset}'
 
         seed_file = (
             seed_path
-            / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{seed}_{args.dataset}.pth"
+            / f"{args.net}_{args.act}_{size_str}_{args.eraser}_{args.name}_{seed}_{args.dataset}.pth"
         )
         if not args.overwrite and seed_file.exists():
             results.append(torch.load(seed_file))
@@ -533,11 +546,11 @@ if __name__ == "__main__":
         run = (
             wandb.init(
                 project="mdl",
-                id=args.wandb_run_id if args.wandb_run_id else None,
+                id=None,
                 entity="eleutherai",
                 name=wandb_name,
                 config={"eraser": args.eraser, **vars(args)},
-                reinit=args.wandb_run_id is None,
+                reinit=True,
             )
             if not args.debug
             else None
@@ -568,7 +581,7 @@ if __name__ == "__main__":
             num_chunks=10,
             logger=run,
             probe_cls=model_cls,
-            ckpt_every=10,
+            ckpt_every=None,
             probe_kwargs=probe_kwargs,
         )
         results.append(
@@ -597,5 +610,5 @@ if __name__ == "__main__":
     torch.save(
         results,
         data_path
-        / f"{args.net}_{args.act}_h={args.width}_d={args.depth}_{args.eraser}_{args.name}_{args.dataset}.pth",
+        / f"{args.net}_{args.act}_{size_str}_{args.eraser}_{args.name}_{args.dataset}.pth",
     )

@@ -100,35 +100,50 @@ class ConvNextProbe(Probe):
             betas: tuple[float, float] = (0.9, 0.999),
             schedule_free: bool = False,
             base_shapes_path: str | None = None,
+            arch: str | None = "atto",
             **kwargs
         ):
+        from transformers import ConvNextV2Config, ConvNextV2ForImageClassification
+        
         super().__init__(num_features, num_classes, device, dtype)
 
         self.learning_rate = learning_rate
         self.betas = betas
         self.schedule_free = schedule_free
         self.mup = base_shapes_path is not None
-        
-        depths = [1, 1, 3, 1]
-        depths = [depth * num_layers for depth in depths]
 
-        hidden_sizes = [hidden_size] + [hidden_size * 2 ** i for i in range(1, 4)]
+        match arch:
+            case "atto" | "":  # default
+                depths = [2, 2, 6, 2]
+                hidden_sizes = [40, 80, 160, 320]
+            case "femto":
+                depths = [2, 2, 6, 2]
+                hidden_sizes = [48, 96, 192, 384]
+            case "pico":
+                depths = [2, 2, 6, 2]
+                hidden_sizes = [64, 128, 256, 512]
+            case "nano":
+                depths = [2, 2, 8, 2]
+                hidden_sizes = [80, 160, 320, 640]
+            case "tiny":
+                depths = [3, 3, 9, 3]
+                hidden_sizes = [96, 192, 384, 768]
+            case other:
+                raise ValueError(f"Unknown ConvNeXt architecture {other}")
 
         image_size = int(math.sqrt(num_features // 3))
-        
-        cfg = ConvNextV2Config(
-                image_size=image_size,
-                num_channels=3,
-                depths=depths,
-                drop_path_rate=0.1,
-                hidden_sizes=hidden_sizes,
-                num_labels=num_classes,
-                # The default of 4 x 4 patches shrinks the image too aggressively for
-                # low-resolution images like CIFAR-10
-                patch_size=1,
-            )
 
-        self.net = ConvNextV2ForImageClassification(cfg).to(device=device, dtype=dtype)
+        cfg = ConvNextV2Config(
+            image_size=image_size,
+            depths=depths,
+            drop_path_rate=0.1,
+            hidden_sizes=hidden_sizes,
+            num_labels=num_classes,
+            # The default of 4 x 4 patches shrinks the image too aggressively for
+            # low-resolution images like CIFAR-10
+            patch_size=1,
+        )
+        self.net = ConvNextV2ForImageClassification(cfg).to(device=device, dtype=dtype) # type: ignore
 
         # Configure MuP
         self.net.classifier = MuReadout(
@@ -168,8 +183,14 @@ class SwinProbe(Probe):
             betas: tuple[float, float] = (0.9, 0.999),
             schedule_free: bool = False,
             base_shapes_path: str | None = None,
-        ):
-        assert num_features == 3 * 32 * 32
+            arch: str | None = "atto",
+        ) -> None:
+        from torchvision.models.swin_transformer import (
+            PatchMergingV2,
+            SwinTransformer,
+            SwinTransformerBlockV2,
+        )
+
         super().__init__(num_features, num_classes, device, dtype)
 
         self.learning_rate = learning_rate
@@ -177,41 +198,47 @@ class SwinProbe(Probe):
         self.schedule_free = schedule_free
         self.mup = base_shapes_path is not None
 
-        # depths=[1, 2, 1] seen in a gist somewhere
-        depths = [1, 1, 2]
-        depths = [depth * num_layers for depth in depths]
+        match arch:
+            case "atto":
+                num_heads = [2, 4, 8, 16]
+                embed_dim = 40
+            case "femto":
+                num_heads = [2, 4, 8, 16]
+                embed_dim = 48
+            case "pico":
+                num_heads = [2, 4, 8, 16]
+                embed_dim = 64
+            case "nano":
+                num_heads = [2, 4, 8, 16]
+                embed_dim = 80
+            case "tiny" | "":  # default
+                num_heads = [3, 6, 12, 24]
+                embed_dim = 96
+            case other:
+                raise ValueError(f"Unknown Swin architecture {other}")
 
-        # num_heads=[2, 2, 4] seen in a gist somewhere
-        num_heads = [1, 1, 2]
-        num_heads = [num_head * num_layers for num_head in num_heads]
-
-        hidden_sizes = [num_heads[0] * hidden_size * 2**i for i in range(3)] 
-        
-        cfg = SwinConfig(
-                image_size=32,
-                num_channels=3,
-                depths=depths,
-                drop_path_rate=0.1,
-                hidden_sizes=hidden_sizes,
-                num_labels=num_classes,
-                embed_dim=num_heads[0] * 4, # Can scale this and the hidden_sizes * 4 arbitrarily
-                num_heads=num_heads,
-                # The default of 4 x 4 patches shrinks the image too aggressively for
-                # low-resolution images like CIFAR-10
-                patch_size=2,
-                window_size=2,
-            )
-
-        self.net = SwinForImageClassification(cfg).to(device=device, dtype=dtype)
-
-        # Configure MuP
-        self.net.classifier = MuReadout(
-            self.net.classifier.in_features,
-            self.net.classifier.out_features,
+        # Tiny architecture with 2 x 2 patches
+        self.net = SwinTransformer(
+            patch_size=[2, 2],
+            embed_dim=embed_dim,
+            depths=[2, 2, 6, 2],
+            num_heads=num_heads,
+            window_size=[7, 7],
+            num_classes=num_classes,
+            stochastic_depth_prob=0.2,
+            block=SwinTransformerBlockV2,
+            downsample_layer=PatchMergingV2,
+        )
+        # Configure MuP        
+        self.net.head = MuReadout(
+            self.net.head.in_features,
+            self.net.head.out_features,
             device=device,
             dtype=dtype,
             readout_zero_init=True
         )
+
+        self.net = torch.compile(self.net).to(device=device, dtype=dtype)
         
         if base_shapes_path:
             base_shapes = load_base_shapes(base_shapes_path)
@@ -224,4 +251,4 @@ class SwinProbe(Probe):
         return torch.optim.AdamW(self.parameters(), lr=self.learning_rate, betas=self.betas)
 
     def forward(self, x):
-        return self.net(x).logits
+        return self.net(x)
