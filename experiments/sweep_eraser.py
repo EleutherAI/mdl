@@ -17,7 +17,7 @@ def run_training(
     args,
 ):
     cmd = [
-        "CUDA_VISIBLE_DEVICES={args.device}",
+        f"CUDA_VISIBLE_DEVICES={args.device}",
         "python",
         "-m",
         "experiments.cli",
@@ -78,7 +78,7 @@ def parse_args():
     parser = ArgumentParser()
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--net", type=str, default="convnext")
-    parser.add_argument("--out", type=str, default="results")
+    parser.add_argument("--out", type=str, default="24-11-21")
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--width", action="store_true")
     parser.add_argument("--depth", action="store_true")
