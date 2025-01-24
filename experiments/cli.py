@@ -312,8 +312,8 @@ def load_eraser(
     if cache_key not in state or nocache:
         if eraser_str == "control":
             state[cache_key] = IdentityEraser()
-        elif eraser_str == "random":
-            state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
+        # elif eraser_str == "random":
+            # state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
         else:
             if eraser_str == "leace":
                 fitter = LeaceFitter(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
@@ -367,10 +367,10 @@ if __name__ == "__main__":
     (X_train, Y_train, X_val, Y_val, k, X, Y) = {
         "cifar10": get_cifar10(device),
         "cifarnet": get_cifarnet(),
-        "fake-cifar10": get_fake_cifar10(),
-        "fake-cifarnet": get_fake_cifarnet(),
+        # "fake-cifar10": get_fake_cifar10(),
+        # "fake-cifarnet": get_fake_cifarnet(),
         "svhn": get_svhn(device),
-        "fake-svhn": get_fake_svhn(),
+        # "fake-svhn": get_fake_svhn(),
     }[args.dataset]
 
     if args.normalize:
@@ -581,7 +581,7 @@ if __name__ == "__main__":
             num_chunks=10,
             logger=run,
             probe_cls=model_cls,
-            ckpt_every=10,
+            ckpt_every=None,
             probe_kwargs=probe_kwargs,
         )
         results.append(
