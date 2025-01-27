@@ -20,7 +20,7 @@ from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
-# from concept_erasure.re import RandomEraser
+from concept_erasure.re import RandomEraser
 
 from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
@@ -338,8 +338,8 @@ def load_eraser(
     if cache_key not in state or nocache:
         if eraser_str == "control":
             state[cache_key] = IdentityEraser()
-        # elif eraser_str == "random":
-            # state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
+        elif eraser_str == "random":
+            state[cache_key] = RandomEraser(X_train.flatten(1).shape[1], erase_dims=random_erase_dims)
         else:
             if eraser_str == "leace":
                 fitter = LeaceFitter(num_features, k, dtype=dtype, device=device, method=method, shrinkage=shrinkage)
@@ -386,7 +386,7 @@ if __name__ == "__main__":
     )
     data_path.mkdir(exist_ok=True, parents=True)
 
-    seed_path = Path(f"data/{args.out}-seeds")
+    seed_path = Path(f"{args.out}-seeds")
     seed_path.mkdir(exist_ok=True, parents=True)
 
     # Get dataset
@@ -566,9 +566,12 @@ if __name__ == "__main__":
             seed_path
             / f"{args.net}_{args.act}_{size_str}_{args.eraser}_{args.name}_{seed}_{args.dataset}.pth"
         )
-        if not args.overwrite and seed_file.exists():
-            results.append(torch.load(seed_file))
-            continue
+        if seed_file.exists(): # not args.overwrite and
+            try:
+                results.append(torch.load(seed_file))
+                continue
+            except:
+                pass
 
         run = (
             wandb.init(
@@ -625,7 +628,11 @@ if __name__ == "__main__":
         )
 
         if not args.debug:
-            torch.save(results, seed_file)
+            try:
+                torch.save(results, seed_file)
+            except Exception as e:
+                print("Caught exception: ", e)
+                pass
 
         try:
             wandb.finish()

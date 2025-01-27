@@ -122,6 +122,8 @@ def scrape_data(filename: Path):
             continue
         
         params['dataset'] = dataset
+
+        params['date'] = run.created_at
         
         param_key = tuple(sorted(params.items()))
 
@@ -142,7 +144,7 @@ def scrape_data(filename: Path):
             steps = [2 ** i for i in range(log2_max)]
 
             run_data = []
-            for row in history:
+            for row in history: 
                 if row['_step'] in steps:
                     entry = {
                         **params,

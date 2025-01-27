@@ -195,8 +195,15 @@ sweep_params = {
             "qleace": 0.9,
             "alf_qleace": 0.9,
         },
-        "archs": ["atto", "femto", "pico", "nano", "tiny"],
-        "mup_arch": "atto",
+        # "archs": ["atto", "femto", "pico", "nano", "tiny"],
+        # "mup_arch": "atto",
+        
+        # Width specifies the first stage; at each additional stage the width is doubled
+        'mup_width': 40,
+        'mup_depth': 2,
+        'widths': [40, 48, 64], # 80, 96
+        'depths': [2, 3, 4]
+
     },
     "swin": {
         "lr": {
@@ -211,8 +218,13 @@ sweep_params = {
             "qleace": 0.9,
             "alf_qleace": 0.9,
         },
-        "archs": ["atto", "femto", "pico", "nano", "tiny"],
-        "mup_arch": "atto",
+        # "archs": ["atto", "femto", "pico", "nano", "tiny"],
+        # "mup_arch": "atto",
+        # Original values
+        'mup_width': 32,
+        'mup_depth': 2,
+        'widths': [32, 64, 128], # 256, 512
+        'depths': [2, 4, 8]
     },
     "resmlp": {
         "mup_width": 128,
@@ -291,59 +303,59 @@ def main():
             lr = sweep_params[args.net]["lr"][eraser]
             b1 = sweep_params[args.net]["b1"][eraser]
 
-        if args.net in ["swin", "convnext"]:
-            for arch in params["archs"][args.start :]:
+        # if args.net in ["swin", "convnext"]:
+        #     for arch in params["archs"][args.start :]:
+        #         if args.overwrite or not artifact_exists(
+        #             None, None, arch, eraser, args
+        #         ):
+        #             run_training(
+        #                 None,
+        #                 None,
+        #                 arch,
+        #                 eraser,
+        #                 lr,
+        #                 b1,
+        #                 None,
+        #                 None,
+        #                 params["mup_arch"],
+        #                 args,
+        #             )
+        # else:
+        if args.width:
+            for width in params["widths"][args.start :]:
                 if args.overwrite or not artifact_exists(
-                    None, None, arch, eraser, args
+                    width, params["mup_depth"], None, eraser, args
                 ):
                     run_training(
+                        width,
+                        params["mup_depth"],
                         None,
-                        None,
-                        arch,
                         eraser,
                         lr,
                         b1,
+                        params["mup_width"],
+                        params["mup_depth"],
                         None,
-                        None,
-                        params["mup_arch"],
                         args,
                     )
-        else:
-            if args.width:
-                for width in params["widths"][args.start :]:
-                    if args.overwrite or not artifact_exists(
-                        width, params["mup_depth"], None, eraser, args
-                    ):
-                        run_training(
-                            width,
-                            params["mup_depth"],
-                            None,
-                            eraser,
-                            lr,
-                            b1,
-                            params["mup_width"],
-                            params["mup_depth"],
-                            None,
-                            args,
-                        )
 
-            if args.depth:
-                for depth in params["depths"][args.start :]:
-                    if args.overwrite or not artifact_exists(
-                        params["mup_width"], depth, None, eraser, args
-                    ):
-                        run_training(
-                            params["mup_width"],
-                            depth,
-                            None,
-                            eraser,
-                            lr,
-                            b1,
-                            params["mup_width"],
-                            params["mup_depth"],
-                            None,
-                            args,
-                        )
+        if args.depth:
+            for depth in params["depths"][args.start :]:
+                if args.overwrite or not artifact_exists(
+                    params["mup_width"], depth, None, eraser, args
+                ):
+                    run_training(
+                        params["mup_width"],
+                        depth,
+                        None,
+                        eraser,
+                        lr,
+                        b1,
+                        params["mup_width"],
+                        params["mup_depth"],
+                        None,
+                        args,
+                    )
 
 
 if __name__ == "__main__":
