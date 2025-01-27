@@ -80,9 +80,9 @@ def main():
 
     Path(args.out).mkdir(parents=True, exist_ok=True)
 
-    # plot_all_erasers_cifarnet(args, device)
+    plot_all_erasers_cifarnet(args, device)
     # print("Plotting erasers")
-    plot_all_erasers_cifar10(args, device)
+    # plot_all_erasers_cifar10(args, device)
     # print("Plotting alf qleace")
     # plot_cifarnet_alf_qleace(args, device)
     # print("Plotting datasets w iterative erasure")
@@ -347,7 +347,7 @@ def plot_all_erasers_cifarnet(args, device):
         # Rank 13 for 90%, rank 238 for 99%, rank 2000+ for 99.9% for method = leace
         # Rank 112 for 90% for method = orth 
         # Rank 13 for 90% LEACE with shrinkage
-        random_erase_dims=15
+        random_erase_dims=13
     )
 
     leace_eraser_cifarnet = load_example_eraser(
@@ -396,16 +396,15 @@ def plot_all_erasers_cifarnet(args, device):
         .squeeze(),
         "Iterative-Erasure": fake_cifarnet_image_6.to(device),
     }
-    breakpoint()
 
     grid = vutils.make_grid(
         [
             sample_images["Original"],
-            sample_images["LEACE"],
-            sample_images["QLEACE"],
-            sample_images["ALF-QLEACE-90"], # Contains very negative numbers, maybe needs to be rescaled using a bias term?
-            sample_images["Iterative-Erasure"],
-            sample_images["Random"],
+            sample_images["LEACE"].clip(0, 1),
+            sample_images["QLEACE"].clip(0, 1),
+            sample_images["ALF-QLEACE-90"].clip(0, 1), # Contains very negative numbers, maybe needs to be rescaled using a bias term?
+            sample_images["Iterative-Erasure"].clip(0, 1),
+            sample_images["Random"].clip(0, 1),
         ],
         nrow=6,
         padding=4,

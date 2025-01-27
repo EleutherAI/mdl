@@ -1,6 +1,6 @@
 
 import pandas as pd
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from pathlib import Path
 import torch
 import plotly.graph_objects as go
@@ -20,17 +20,17 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
     ordered_erasers = [
         e
-        for e in ["QLEACE", "Iterative Erasure", "ALF-QLEACE", "LEACE", "Control",]
+        for e in ["QLEACE", "Iterative Erasure", "Leace and Iterative Erasure", "ALF-QLEACE", "LEACE", "Control"]
         if e in df["eraser"].unique()
     ]
 
     df = df[df["dataset"] == dataset].sort_values(["depth", "width"])
     # unique_nets = df["net_id"].unique()
 
-    if dataset == "cifar10":
-        unique_nets = ['mlp', 'resmlp', 'lenet', 'swin', 'convnext']
-    else:
-        unique_nets = ['mlp', 'resmlp', 'lenet']
+    # if dataset == "cifar10":
+        # unique_nets = ['mlp', 'resmlp', 'lenet', 'swin', 'convnext']
+    # else:
+    unique_nets = ['mlp', 'resmlp', 'lenet']
 
     n_rows = len(unique_nets)
 
@@ -39,6 +39,13 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
     
     # flatten into a single list
     titles = [item for sublist in titles for item in sublist]
+
+    # Calculate global y-axis range
+    y_min = df[df["act"] == "ReLU"]["mdl"].min()
+    y_max = df[df["act"] == "ReLU"]["mdl"].max()
+    
+    # Add some padding to the range
+    y_range = [y_min - 0.05 * (y_max - y_min), y_max + 0.05 * (y_max - y_min)]
 
     # Create subplot grid
     fig = make_subplots(
@@ -88,7 +95,9 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
                 showticklabels=True,
                 row=row_idx,
                 col=col,
+                range=y_range,
             )
+            
 
         # Set up x-axes (only for bottom row)
         if row_idx == n_rows:
@@ -182,10 +191,10 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("/mnt/ssd-1/lucia/24-11-21"))
+    parser.add_argument("--data", type=Path, default=Path("24-11-21"))
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--out", type=Path, default=Path("data/images/sweep_plots"))
-    args = parser.parse_args()
+    args: Namespace = parser.parse_args()
 
     if args.dataset == "cifar10":
         assert "cifarnet" not in args.data.name

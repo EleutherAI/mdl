@@ -16,7 +16,7 @@ import plotly.io as pio
 pio.kaleido.scope.mathjax = None  # https://github.com/plotly/plotly.py/issues/3469
 
 
-def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
+def plot_data(df: pd.DataFrame, out: Path, dataset: str):
     """Create plots for each network and activation function combination, with different erasers as lines on the same plot."""
     out.mkdir(exist_ok=True)
 
@@ -26,6 +26,7 @@ def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
     colors = px.colors.qualitative.Plotly
     ordered_erasers = ["Control", "LEACE", "QLEACE", "ALF-QLEACE"]
 
+    # for net_id in ["mlp", "lenet", "resmlp"]:
     for net_id in df["net_id"].unique():
         net = DISPLAY_NAMES[net_id]
         
@@ -166,7 +167,7 @@ def plot_data(df: pd.DataFrame, out: Path, dataset: str, tag: str):
                         )
 
             # Save plot for this activation function
-            fig.write_image(out / f"{net}_{act}_{dataset}{'_' + tag if tag else ''}_loss.pdf", format="pdf")
+            fig.write_image(out / f"{net}_{act}_{dataset}_loss.pdf", format="pdf")
 
 def parse_args():
     parser = ArgumentParser()
@@ -174,7 +175,6 @@ def parse_args():
     parser.add_argument("--data", type=str, default="loss_curve.csv")
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--scrape", action="store_true")
-    parser.add_argument("--tag", type=str, default="")
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -182,11 +182,13 @@ if __name__ == '__main__':
     
     data_path = Path('data')
     
-    data = data_path / f'{args.tag + "_" if args.tag else ""}{args.data}'
+    data = data_path / f'{args.data}'
     out = data_path / args.out
 
     if args.scrape:
-        scrape_data(data, args.dataset, args.tag)
+        scrape_data(data)
 
     df = pd.read_csv(data)
-    plot_data(df, out, args.dataset, args.tag)
+    df = df[df["dataset"] == args.dataset]
+
+    plot_data(df, out, args.dataset)

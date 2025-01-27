@@ -83,41 +83,45 @@ def parse_dataset(run: Run) -> str:
     if '24-11-21' not in run.name and '24-11-19' not in run.name:
         print(str_args)
 
-    if 'fake-cifar10' in str_args:
+    if 'fake-leace-cifar10' in str_args:
+        return 'fake-leace-cifar10'
+    elif 'fake-leace-cifarnet' in str_args:
+        return 'fake-leace-cifarnet'
+    elif 'fake-leace-svhn' in str_args:
+        return 'fake-leace-svhn'
+    elif 'fake-cifar10' in str_args:
         return 'fake-cifar10'
     elif 'fake-cifarnet' in str_args:
         return 'fake-cifarnet'
     elif 'cifarnet' in str_args:
         return 'cifarnet'
-    return 'cifar10'
+    elif 'svhn' in str_args:
+        return 'svhn'
+    return 'cifar10' # Some runs have no dataset tagged
 
 
-def scrape_data(filename: Path, dataset_str: str, tag: str):
+def scrape_data(filename: Path):
     api = wandb.Api(timeout=1000)
     runs = api.runs("eleutherai/mdl")
 
     latest_runs = {}
     for run in runs:
-        if tag:
-            if tag not in run.name:
-                continue
-        else:
-            if '24-11-21' not in run.name and '24-11-19' not in run.name:
-                if dataset_str == 'cifarnet' or 'resmlp' in run.name:
-                    if not 'result' in run.name and not 'cifarnet' in run.name:
-                        continue
-                else:
-                    continue
-                
-        dataset = parse_dataset(run)
-        if dataset != dataset_str:
+        if '24-11-21' not in run.name and '24-11-19' not in run.name and 'results' not in run.name:
+            # if dataset_str == 'cifarnet' or 'resmlp' in run.name:
+            #     if not 'result' in run.name and not 'cifarnet' in run.name:
+            #         continue
+            # else:
             continue
+
+        dataset = parse_dataset(run)
+        # if dataset != dataset_str:
+            # continue
 
         params = parse_run_params(run)
         if not params:
             continue
         
-        params['dataset'] = dataset_str
+        params['dataset'] = dataset
         
         param_key = tuple(sorted(params.items()))
 

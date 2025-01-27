@@ -28,14 +28,24 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
         width = int(width.split("=")[1])
         depth = int(depth.split("=")[1])
 
-        data = torch.load(file, weights_only=False)
+        try:
+            data = torch.load(file, weights_only=False)
+        except Exception as e:
+            print(f"Error loading data: {file}, {e}")
+            continue
+
         for seed, result in enumerate(data):
             # Handle nested list structure
             while isinstance(result, list):
                 result = result[0]
 
             actual_dataset = dataset.replace('fake-', '')
-            eraser_name = "Iterative Erasure" if "fake-" in dataset else DISPLAY_NAMES[eraser]
+            
+            eraser_name = DISPLAY_NAMES[eraser]
+            if "fake-leace" in dataset:
+                eraser_name = "LEACE and Iterative Erasure"
+            elif "fake-" in dataset:
+                eraser_name = "Iterative Erasure"
                 
             records.append(
                 {
@@ -69,7 +79,9 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
     df = df[df["dataset"] == dataset].sort_values(["depth", "width"])
 
-    for net_id in df["net_id"].unique():
+    net_ids = ["mlp", "lenet", "resmlp"]
+    for net_id in net_ids:
+    # for net_id in df["net_id"].unique():
         net = DISPLAY_NAMES[net_id]
         reference_width = sweep_params[net_id]["mup_width"]
         reference_depth = sweep_params[net_id]["mup_depth"]
@@ -203,7 +215,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("/mnt/ssd-1/lucia/24-11-21"))
+    parser.add_argument("--data", type=Path, default=Path("24-11-21"))
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--out", type=Path, default=Path("data/images/sweep_plots"))
     args = parser.parse_args()
