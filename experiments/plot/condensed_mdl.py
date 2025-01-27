@@ -20,7 +20,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
     ordered_erasers = [
         e
-        for e in ["QLEACE", "Iterative Erasure", "Leace and Iterative Erasure", "ALF-QLEACE", "LEACE", "Control"]
+        for e in ["QLEACE", "Iterative Erasure", "LEACE and Iterative Erasure", "ALF-QLEACE", "LEACE", "Control",]
         if e in df["eraser"].unique()
     ]
 
@@ -132,6 +132,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
         for eraser_idx, eraser in enumerate(ordered_erasers):
             data = net_df[net_df["eraser"] == eraser]
             if data.empty:
+                print(f"Skipping {eraser} for {net}")
                 continue
 
             mean_data = (

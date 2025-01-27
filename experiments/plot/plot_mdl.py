@@ -39,17 +39,19 @@ def load_sweep_data(data_path: Path) -> pd.DataFrame:
             while isinstance(result, list):
                 result = result[0]
 
-            actual_dataset = dataset.replace('fake-', '')
-            
-            eraser_name = DISPLAY_NAMES[eraser]
-            if "fake-leace" in dataset:
+            base_dataset = dataset.replace('fake-leace-', '')
+            base_dataset = base_dataset.replace('fake-', '')
+
+            if 'fake-leace' in dataset:
                 eraser_name = "LEACE and Iterative Erasure"
-            elif "fake-" in dataset:
+            elif 'fake' in dataset:
                 eraser_name = "Iterative Erasure"
+            else:
+                eraser_name = DISPLAY_NAMES[eraser]
                 
             records.append(
                 {
-                    "dataset": actual_dataset,
+                    "dataset": base_dataset,
                     "net_id": net,
                     "net": DISPLAY_NAMES[net],
                     "act": DISPLAY_NAMES[act],
