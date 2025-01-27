@@ -61,6 +61,7 @@ class MlpProbe(Probe):
         schedule_free: bool = False,
         base_shapes_path: str | None = None,
         muon=False,
+        **kwargs
     ):
         super().__init__(num_features, num_classes, device, dtype)
 
@@ -153,6 +154,7 @@ class ResMlpProbe(Probe):
         betas: tuple[float, float] = (0.9, 0.999),
         schedule_free: bool = False,
         base_shapes_path: str | None = None,
+        **kwargs
     ):
         super().__init__(num_features, num_classes, device, dtype)
         self.num_layers = num_layers

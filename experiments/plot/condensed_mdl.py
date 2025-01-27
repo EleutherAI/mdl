@@ -20,17 +20,17 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
     ordered_erasers = [
         e
-        for e in ["QLEACE", "Iterative Erasure", "ALF-QLEACE", "LEACE", "Control",]
+        for e in ["QLEACE", "Iterative Erasure", "LEACE and Iterative Erasure", "ALF-QLEACE", "LEACE", "Control",]
         if e in df["eraser"].unique()
     ]
 
     df = df[df["dataset"] == dataset].sort_values(["depth", "width"])
     # unique_nets = df["net_id"].unique()
 
-    if dataset == "cifar10":
-        unique_nets = ['mlp', 'resmlp', 'lenet', 'swin', 'convnext']
-    else:
-        unique_nets = ['mlp', 'resmlp', 'lenet']
+    # if dataset == "cifar10":
+        # unique_nets = ['mlp', 'resmlp', 'lenet', 'swin', 'convnext']
+    # else:
+    unique_nets = ['mlp', 'resmlp', 'lenet']
 
     n_rows = len(unique_nets)
 
@@ -123,6 +123,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
         for eraser_idx, eraser in enumerate(ordered_erasers):
             data = net_df[net_df["eraser"] == eraser]
             if data.empty:
+                print(f"Skipping {eraser} for {net}")
                 continue
 
             mean_data = (
@@ -182,7 +183,7 @@ def create_plots(df: pd.DataFrame, output_dir: Path, dataset: str):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--data", type=Path, default=Path("/mnt/ssd-1/lucia/24-11-21"))
+    parser.add_argument("--data", type=Path, default=Path("24-11-21"))
     parser.add_argument("--dataset", type=str, default="cifar10")
     parser.add_argument("--out", type=Path, default=Path("data/images/sweep_plots"))
     args = parser.parse_args()

@@ -184,6 +184,7 @@ class SwinProbe(Probe):
             schedule_free: bool = False,
             base_shapes_path: str | None = None,
             arch: str | None = "atto",
+            **kwargs
         ) -> None:
         from torchvision.models.swin_transformer import (
             PatchMergingV2,

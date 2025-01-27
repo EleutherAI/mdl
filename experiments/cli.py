@@ -20,7 +20,7 @@ from mup import make_base_shapes
 from concept_erasure.quadratic import QuadraticFitter
 from concept_erasure.leace import LeaceFitter
 from concept_erasure.alf_qleace import AlfQLeaceFitter
-# from concept_erasure.re import RandomEraser
+from concept_erasure.re import RandomEraser
 
 from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
@@ -37,7 +37,10 @@ class Args:
     out: str = "results"
 
     # Dataset options
-    dataset: Literal["cifar10", "cifarnet", "fake-cifar10", "fake-cifarnet", "svhn", "fake-svhn", "fake-leace-cifar10"] = "cifar10"
+    dataset: Literal["cifar10", "cifarnet", "fake-cifar10", 
+                     "fake-cifarnet", "svhn", "fake-svhn", "fake-leace-cifar10",
+                     "fake-leace-cifarnet", "fake-leace-svhn",
+                    ] = "cifar10"
     eraser: Literal["control", "leace", "oleace", "qleace", "alf_qleace", "random"] = "control"
     method: Literal["leace", "orth", "none"] = "leace"
     shrinkage: bool = False
@@ -130,7 +133,7 @@ def get_cifarnet(shuffle=True):
     return X_train, Y_train, X_val, Y_val, k, X, Y
 
 
-def get_cifar10(device: str | torch.device, shuffle=True):
+def get_cifar10(device: str | torch.device = 'cuda', shuffle=True):
     nontest = CIFAR10("data/cache/cifar10", download=True)
     images, labels = zip(*nontest)
 
@@ -161,6 +164,54 @@ def get_cifar10(device: str | torch.device, shuffle=True):
 def get_fake_leace_cifar10(shuffle=True):
     train = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifar10/train")
     val = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifar10/val")
+    train.set_format(type="torch", columns=["image", "label"])
+    val.set_format(type="torch", columns=["image", "label"])
+
+    X_train = train["image"]
+    Y_train = train["label"]
+    X_val = val["image"]
+    Y_val = val["label"]
+
+    X = X_train
+    Y = Y_train
+    k = int(Y_train.max()) + 1
+
+    if shuffle:
+        rng = torch.Generator(device=X_train.device).manual_seed(42)
+        perm = torch.randperm(len(X_train), generator=rng, device=X_train.device)
+        X_train, Y_train = X_train[perm], Y_train[perm]
+        perm = torch.randperm(len(X_val), generator=rng, device=X_val.device)
+        X_val, Y_val = X_val[perm], Y_val[perm]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
+def get_fake_leace_cifarnet(shuffle=True):
+    train = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifarnet/train")
+    val = load_from_disk("data/leace-and-quadratic-iterative-erasure-cifarnet/val")
+    train.set_format(type="torch", columns=["image", "label"])
+    val.set_format(type="torch", columns=["image", "label"])
+
+    X_train = train["image"]
+    Y_train = train["label"]
+    X_val = val["image"]
+    Y_val = val["label"]
+
+    X = X_train
+    Y = Y_train
+    k = int(Y_train.max()) + 1
+
+    if shuffle:
+        rng = torch.Generator(device=X_train.device).manual_seed(42)
+        perm = torch.randperm(len(X_train), generator=rng, device=X_train.device)
+        X_train, Y_train = X_train[perm], Y_train[perm]
+        perm = torch.randperm(len(X_val), generator=rng, device=X_val.device)
+        X_val, Y_val = X_val[perm], Y_val[perm]
+
+    return X_train, Y_train, X_val, Y_val, k, X, Y
+
+def get_fake_leace_svhn(shuffle=True):
+    train = load_from_disk("data/leace-and-quadratic-iterative-erasure-svhn/train")
+    val = load_from_disk("data/leace-and-quadratic-iterative-erasure-svhn/val")
     train.set_format(type="torch", columns=["image", "label"])
     val.set_format(type="torch", columns=["image", "label"])
 
@@ -369,7 +420,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     lt.monkey_patch()
     Path("data").mkdir(exist_ok=True)
-    dtype = torch.float32
+    dtype = torch.bfloat16
 
     parser = ArgumentParser()
     parser.add_arguments(Args, dest="args")
@@ -391,14 +442,19 @@ if __name__ == "__main__":
 
     # Get dataset
     (X_train, Y_train, X_val, Y_val, k, X, Y) = {
-        "cifar10": get_cifar10(device),
-        "cifarnet": get_cifarnet(),
-        # "fake-cifar10": get_fake_cifar10(),
-        # "fake-cifarnet": get_fake_cifarnet(),
-        "svhn": get_svhn(device),
-        # "fake-svhn": get_fake_svhn(),
-        "fake-leace-cifar10": get_fake_leace_cifar10(),
-    }[args.dataset]
+        "cifar10": get_cifar10,
+        "cifarnet": get_cifarnet,
+        # "fake-cifar10": get_fake_cifar10,
+        # "fake-cifarnet": get_fake_cifarnet,
+        "svhn": get_svhn,
+        # "fake-svhn": get_fake_svhn,
+        "fake-leace-cifar10": get_fake_leace_cifar10,
+        "fake-leace-cifarnet": get_fake_leace_cifarnet,
+        "fake-leace-svhn": get_fake_leace_svhn,
+    }[args.dataset]()
+    X_train = X_train.to(dtype)
+    X_val = X_val.to(dtype)
+    X = X.to(dtype)
 
     if args.normalize:
         assert args.eraser == "control"

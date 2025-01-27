@@ -157,9 +157,9 @@ class Probe(nn.Module, ABC):
 
             if logger is not None:
                 # Calculate norm of parameters' mean differences from initialization
-                (
-                    w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius, 
-                ) = self.dist_from_init(initial_weights)
+                # (
+                #     w_frobenius_norm, w_spectral_norm, b_l1, b_frobenius, 
+                # ) = self.dist_from_init(initial_weights)
                 # w_frobenius_norms, w_spectral_norms, b_l1_norms, b_frobenius_norms
 
                 log_data = {
@@ -169,10 +169,10 @@ class Probe(nn.Module, ABC):
                     "step": (i * len(x_train) // batch_size) + len(x_train) // batch_size,
                     "learning_rate": opt.param_groups[0]["lr"],
                     "epoch": i,
-                    "mean_norms/weight_frobenius": w_frobenius_norm,
-                    "mean_norms/weight_spectral": w_spectral_norm,
-                    "mean_norms/bias_l1": b_l1,
-                    "mean_norms/bias_frobenius": b_frobenius,
+                    # "mean_norms/weight_frobenius": w_frobenius_norm,
+                    # "mean_norms/weight_spectral": w_spectral_norm,
+                    # "mean_norms/bias_l1": b_l1,
+                    # "mean_norms/bias_frobenius": b_frobenius,
                     
                 }
 

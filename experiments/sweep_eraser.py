@@ -96,6 +96,9 @@ def parse_args():
             "fake-cifarnet",
             "svhn",
             "fake-svhn",
+            "fake-leace-cifar10",
+            "fake-leace-cifarnet",
+            "fake-leace-svhn",
         ),
         default="cifar10",
     )
@@ -144,6 +147,14 @@ sweep_params = {
                 "qleace": 0.95,
                 "alf_qleace": 0.95,  # guessing
                 "random": 0.95,
+            },
+        },
+        "fake-leace-cifar10": {
+            "lr": {
+                "control": 1e-4, # Verified
+            },
+            "b1": {
+                "control": 0.95,
             },
         },
         "lr": {
@@ -198,24 +209,6 @@ sweep_params = {
         "mup_arch": "atto",
     },
     "resmlp": {
-        "mup_width": 128,
-        "mup_depth": 2,
-        "widths": [64, 128, 256, 512, 1024, 2048],
-        "depths": [1, 2, 3, 4, 6, 8],
-        "lr": {
-            "control": 5e-4,
-            "leace": 5e-4,
-            "qleace": 5e-4,
-            "alf_qleace": 5e-4,  # guessing
-        },
-        "b1": {
-            "control": 0.99,
-            "leace": 0.95,
-            "qleace": 0.95,
-            "alf_qleace": 0.95,  # guessing
-        },
-    },
-    "skipmlp": {
         "mup_width": 128,
         "mup_depth": 2,
         "widths": [64, 128, 256, 512, 1024, 2048],
