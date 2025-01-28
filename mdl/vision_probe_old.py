@@ -55,6 +55,7 @@ class ConvNextProbe(Probe):
             )
 
         self.net = ConvNextV2ForImageClassification(cfg).to(device=device, dtype=dtype)
+        self.net = torch.compile(self.net)
 
         # Configure MuP
         self.net.classifier = MuReadout(
@@ -130,6 +131,7 @@ class SwinProbe(Probe):
             )
 
         self.net = SwinForImageClassification(cfg).to(device=device, dtype=dtype)
+        self.net = torch.compile(self.net)
 
         # Configure MuP
         self.net.classifier = MuReadout(
