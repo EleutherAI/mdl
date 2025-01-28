@@ -201,14 +201,16 @@ class Probe(nn.Module, ABC):
     @torch.no_grad()
     def evaluate(self, x: Tensor, y: Tensor, batch_size: int) -> float:
         """Compute average loss on `(x, y)` in batches of size `batch_size`."""
-        total_loss = sum(
-            self.loss(x_batch, y_batch).item() * len(x_batch)
-            for x_batch, y_batch in zip(x.split(batch_size), y.split(batch_size))
-        )
+        # breakpoint()
+        total_loss = sum(self.loss(x_batch, y_batch).item() * len(x_batch) for x_batch, y_batch in zip(x.split(batch_size), y.split(batch_size)))
         return total_loss / len(x)
 
     def loss_fn(self, logits: Tensor, target: Tensor, smoothing: float = 0) -> Tensor:
         """Computes the loss of the predictions on the given data."""
+        # print(logits.shape, target.shape)
+        # print("Target min/max:", target.min().item(), target.max().item())
+
+
         return (
             cross_entropy(logits, target.long())
             if logits.ndim == 2

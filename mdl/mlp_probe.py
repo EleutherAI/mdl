@@ -189,6 +189,7 @@ class ResMlpProbe(Probe):
 
     def forward(self, x: Tensor) -> Tensor:
         features = self.trunk(x)
+
         return self.fc(features).squeeze(-1)
 
     def build_optimizer(self) -> optim.Optimizer:

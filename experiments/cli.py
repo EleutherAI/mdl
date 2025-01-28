@@ -380,7 +380,7 @@ def load_eraser(
     fit_device: str | torch.device = "cpu",
     random_erase_dims=300
 ):
-    state_path = Path("data") / "erasers_cache" / "state.pth"
+    state_path = Path("erasers_cache") / "state.pth"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state = {} if not state_path.exists() else torch.load(state_path, weights_only=False)
 
@@ -466,7 +466,7 @@ if __name__ == "__main__":
     eraser = load_eraser(
         args.eraser,
         args.dataset,
-        dtype if args.eraser != "leace" else torch.float64,
+        torch.float32 if args.eraser != "leace" else torch.float64,
         args.method,
         args.shrinkage,
         args.alf_qleace_target,
@@ -622,11 +622,12 @@ if __name__ == "__main__":
             seed_path
             / f"{args.net}_{args.act}_{size_str}_{args.eraser}_{args.name}_{seed}_{args.dataset}.pth"
         )
-        if seed_file.exists(): # not args.overwrite and
+        if not args.overwrite and seed_file.exists():
             try:
                 results.append(torch.load(seed_file))
                 continue
-            except:
+            except Exception as e:
+                print("Caught exception: ", e)
                 pass
 
         run = (
