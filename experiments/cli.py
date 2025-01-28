@@ -25,7 +25,7 @@ from concept_erasure.re import RandomEraser
 from mdl.lenet_probe import LeNetProbe
 from mdl.mlp_probe import ResMlpProbe, MlpProbe, LinearProbe
 from mdl.sweep import Sweep
-from mdl.vision_probe import ConvNextProbe, VisionProbe, SwinProbe
+from mdl.vision_probe_old import ConvNextProbe, SwinProbe
 from mdl.resnet_probe import ResNetProbe
 
 torch.set_float32_matmul_precision('high')
@@ -61,8 +61,8 @@ class Args:
     mup_depth: int | None = None  # Depth of the base model used to tune the initial LR
     
     # Model dimensions for SOTA vision architectures
-    arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
-    mup_arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
+    # arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
+    # mup_arch: Literal["atto", "femto", "pico", "nano", "tiny"] = "atto"
 
     # Training parameters
     lr: float = 1e-3
@@ -489,7 +489,6 @@ if __name__ == "__main__":
         "resnet": ResNetProbe,
         "convnext": ConvNextProbe,
         "linear": LinearProbe,
-        "vision": VisionProbe,
         "swin": SwinProbe,
         "lenet": LeNetProbe,
     }[args.net]
@@ -508,7 +507,7 @@ if __name__ == "__main__":
         num_features=num_features,
         num_layers=args.depth,  # mup depth unsupported
         hidden_size=args.mup_width if args.mup_width else args.width,
-        arch=args.mup_arch if args.mup_arch else args.arch,
+        # arch=args.mup_arch if args.mup_arch else args.arch,
         **probe_kwargs
     )
     delta_model = model_cls(
@@ -516,7 +515,7 @@ if __name__ == "__main__":
         num_features=num_features,
         num_layers=args.depth,
         hidden_size=args.width,
-        arch=args.arch,
+        # arch=args.arch,
         **probe_kwargs
     )
 
@@ -602,8 +601,8 @@ if __name__ == "__main__":
         probe_kwargs['fc_hidden_sizes'] = lenet_params['fc_hidden_sizes']
     if model_cls == MlpProbe:
         probe_kwargs["activation"] = args.act
-    if model_cls == SwinProbe or model_cls == ConvNextProbe:
-        probe_kwargs["arch"] = args.arch
+    # if model_cls == SwinProbe or model_cls == ConvNextProbe:
+        # probe_kwargs["arch"] = args.arch
     if args.trial:
         # These are otherwise passed into the sweep
         probe_kwargs["num_classes"] = k
@@ -613,7 +612,8 @@ if __name__ == "__main__":
 
     results = []
 
-    size_str = f'a={args.arch}' if args.net == "convnext" or args.net == "swin" else f'h={args.width}_d={args.depth}'
+    # size_str = f'a={args.arch}' if args.net == "convnext" or args.net == "swin" else f'h={args.width}_d={args.depth}'
+    size_str = f'h={args.width}_d={args.depth}'
 
     for seed in range(args.num_seeds):
         wandb_name = f'{args.eraser} {args.name} {size_str.replace("_", " ")} s={seed} {args.net} act={args.act} lr={args.lr:.7f} b1={args.b1} n={args.normalize} es={args.early_stop_epochs} d={args.dataset}'
